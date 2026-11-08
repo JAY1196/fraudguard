@@ -4,3 +4,22 @@ server:
 spring:
   application:
     name: fraudguard
+
+fraudguard:
+  thresholds:
+    review: 40
+    block: 70
+  rules:
+    high-amount:
+      enabled: true
+      threshold-paise: 5000000
+      weight: 50
+      reason-code: HIGH_AMOUNT
+    unusual-hours:
+      enabled: true
+      start-hour: 23
+      end-hour: 5
+      threshold-paise: 2000000
+      weight: 40
+      reason-code: UNUSUAL_HOURS_HIGH_AMOUNT
+      time-zone: UTC
