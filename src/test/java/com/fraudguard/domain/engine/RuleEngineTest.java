@@ -44,6 +44,7 @@ class RuleEngineTest {
         fixedClock = Clock.fixed(Instant.parse("2026-11-09T00:00:00Z"), ZoneOffset.UTC);
         properties = new FraudGuardProperties(
                 new FraudGuardProperties.ThresholdProperties(40, 70),
+                null,
                 null
         );
         sampleTransaction = new Transaction(

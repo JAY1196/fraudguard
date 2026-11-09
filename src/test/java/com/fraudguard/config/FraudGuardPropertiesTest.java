@@ -11,9 +11,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class FraudGuardPropertiesTest {
 
     @Test
-    @DisplayName("Default properties must use 40 review, 70 block, and Asia/Kolkata timezone")
+    @DisplayName("Default properties must use 40 review, 70 block, Asia/Kolkata timezone, and 300s future skew")
     void shouldHaveSensibleDefaults() {
-        FraudGuardProperties properties = new FraudGuardProperties(null, null);
+        FraudGuardProperties properties = new FraudGuardProperties(null, null, null);
 
         assertThat(properties.thresholds().review()).isEqualTo(40);
         assertThat(properties.thresholds().block()).isEqualTo(70);
@@ -22,6 +22,8 @@ class FraudGuardPropertiesTest {
         assertThat(properties.rules().unusualHours().endHour()).isEqualTo(5);
         assertThat(properties.rules().highAmount().weight()).isEqualTo(50);
         assertThat(properties.rules().unusualHours().weight()).isEqualTo(40);
+        assertThat(properties.validation().maxFutureSkewSeconds()).isEqualTo(300L);
+        assertThat(properties.validation().maxPastAgeSeconds()).isNull();
     }
 
     @Test
@@ -55,7 +57,7 @@ class FraudGuardPropertiesTest {
     @DisplayName("Hour validation: startHour must be between 0 and 23")
     void shouldFailWhenStartHourIsInvalid(int invalidHour) {
         assertThatThrownBy(() -> new FraudGuardProperties.UnusualHoursRuleProperties(
-                true, invalidHour, 5, 2_000_000L, 40, "CODE", "Asia/Kolkata", 300L, 86400L
+                true, invalidHour, 5, 2_000_000L, 40, "CODE", "Asia/Kolkata"
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Start hour must be between 0 and 23");
     }
@@ -65,7 +67,7 @@ class FraudGuardPropertiesTest {
     @DisplayName("Hour validation: endHour must be between 0 and 23")
     void shouldFailWhenEndHourIsInvalid(int invalidHour) {
         assertThatThrownBy(() -> new FraudGuardProperties.UnusualHoursRuleProperties(
-                true, 23, invalidHour, 2_000_000L, 40, "CODE", "Asia/Kolkata", 300L, 86400L
+                true, 23, invalidHour, 2_000_000L, 40, "CODE", "Asia/Kolkata"
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("End hour must be between 0 and 23");
     }
@@ -80,7 +82,7 @@ class FraudGuardPropertiesTest {
                 .hasMessageContaining("Weight must be between 1 and 100");
 
         assertThatThrownBy(() -> new FraudGuardProperties.UnusualHoursRuleProperties(
-                true, 23, 5, 2_000_000L, invalidWeight, "CODE", "Asia/Kolkata", 300L, 86400L
+                true, 23, 5, 2_000_000L, invalidWeight, "CODE", "Asia/Kolkata"
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Weight must be between 1 and 100");
     }
@@ -89,8 +91,20 @@ class FraudGuardPropertiesTest {
     @DisplayName("Timezone validation: invalid time zone string must fail fast")
     void shouldFailWhenTimezoneIsInvalid() {
         assertThatThrownBy(() -> new FraudGuardProperties.UnusualHoursRuleProperties(
-                true, 23, 5, 2_000_000L, 40, "CODE", "Invalid/Fake_Zone", 300L, 86400L
+                true, 23, 5, 2_000_000L, 40, "CODE", "Invalid/Fake_Zone"
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid timeZone: 'Invalid/Fake_Zone'");
+    }
+
+    @Test
+    @DisplayName("Validation properties: negative maxFutureSkewSeconds or negative maxPastAgeSeconds must fail")
+    void shouldFailWhenValidationPropertiesAreNegative() {
+        assertThatThrownBy(() -> new FraudGuardProperties.ValidationProperties(-1L, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxFutureSkewSeconds must be >= 0");
+
+        assertThatThrownBy(() -> new FraudGuardProperties.ValidationProperties(300L, -10L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxPastAgeSeconds must be >= 0");
     }
 }

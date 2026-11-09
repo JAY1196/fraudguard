@@ -6,9 +6,7 @@ import com.fraudguard.domain.model.Transaction;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,8 +17,6 @@ class UnusualHoursHighAmountRuleTest {
     private static final String REASON_CODE = "UNUSUAL_HOURS_HIGH_AMOUNT";
     private static final int START_HOUR = 23;
     private static final int END_HOUR = 5;
-    private static final long MAX_FUTURE_SKEW = 300L; // 5 minutes
-    private static final long MAX_PAST_AGE = 86400L; // 24 hours
 
     private FraudGuardProperties buildProperties(boolean enabled, int start, int end, String timeZone) {
         return new FraudGuardProperties(
@@ -28,10 +24,10 @@ class UnusualHoursHighAmountRuleTest {
                 new FraudGuardProperties.RulesProperties(
                         null,
                         new FraudGuardProperties.UnusualHoursRuleProperties(
-                                enabled, start, end, THRESHOLD, WEIGHT, REASON_CODE, timeZone,
-                                MAX_FUTURE_SKEW, MAX_PAST_AGE
+                                enabled, start, end, THRESHOLD, WEIGHT, REASON_CODE, timeZone
                         )
-                )
+                ),
+                null
         );
     }
 
@@ -49,11 +45,10 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Boundary hour 22:59 event time (before window 23:00) does not trigger even with high amount")
     void shouldNotTriggerBeforeStartHour() {
-        Instant eventTime = Instant.parse("2026-11-09T22:59:59Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(10), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T22:59:59Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, eventTime));
 
@@ -63,11 +58,10 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Boundary hour 23:00 event time (exact window start) triggers when amount exceeds threshold")
     void shouldTriggerAtExactStartHour() {
-        Instant eventTime = Instant.parse("2026-11-09T23:00:00Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(5), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T23:00:00Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, eventTime));
 
@@ -80,11 +74,10 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Boundary hour 04:59 event time (last minute of unusual window) triggers when amount exceeds threshold")
     void shouldTriggerAtEndOfOvernightWindow() {
-        Instant eventTime = Instant.parse("2026-11-09T04:59:59Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(2), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T04:59:59Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, eventTime));
 
@@ -95,11 +88,10 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Boundary hour 05:00 event time (exact window end) does not trigger even with high amount")
     void shouldNotTriggerAtExactEndHour() {
-        Instant eventTime = Instant.parse("2026-11-09T05:00:00Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(1), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T05:00:00Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, eventTime));
 
@@ -109,11 +101,10 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Boundary amount: equal to threshold in unusual window does not trigger")
     void shouldNotTriggerWhenAmountEqualsThresholdDuringUnusualHours() {
-        Instant eventTime = Instant.parse("2026-11-09T02:00:00Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(1), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T02:00:00Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD, eventTime));
 
@@ -123,11 +114,10 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Boundary amount: 1 paise above threshold in unusual window triggers")
     void shouldTriggerWhenAmountIsAboveThresholdDuringUnusualHours() {
-        Instant eventTime = Instant.parse("2026-11-09T02:00:00Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(1), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T02:00:00Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, eventTime));
 
@@ -139,11 +129,10 @@ class UnusualHoursHighAmountRuleTest {
     @DisplayName("Timezone conversion: UTC event time correctly evaluated against Asia/Kolkata (IST = UTC+05:30)")
     void shouldCorrectlyEvaluateInConfiguredTimezone() {
         // 18:00 UTC = 23:30 Asia/Kolkata (which falls in 23:00 - 05:00 window)
-        Instant eventTime = Instant.parse("2026-11-09T18:00:00Z");
-        Clock clock = Clock.fixed(eventTime.plusSeconds(5), ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "Asia/Kolkata"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "Asia/Kolkata")
         );
+        Instant eventTime = Instant.parse("2026-11-09T18:00:00Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, eventTime));
 
@@ -151,77 +140,26 @@ class UnusualHoursHighAmountRuleTest {
     }
 
     @Test
-    @DisplayName("Staleness check: reject future timestamp that exceeds max allowed clock skew")
-    void shouldRejectFutureTimestampBeyondAllowedSkew() {
-        Instant processingTime = Instant.parse("2026-11-09T02:00:00Z");
-        Clock clock = Clock.fixed(processingTime, ZoneOffset.UTC);
-        UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+    @DisplayName("Should support daytime non-overnight window (e.g. 1 to 4)")
+    void shouldSupportNonOvernightWindow() {
+        UnusualHoursHighAmountRule ruleInside = new UnusualHoursHighAmountRule(
+                buildProperties(true, 1, 4, "UTC")
         );
+        assertThat(ruleInside.evaluate(createTransaction(THRESHOLD + 1, Instant.parse("2026-11-09T02:00:00Z"))).triggered()).isTrue();
 
-        // Event time is 301 seconds into the future (exceeds max skew of 300s)
-        Instant futureEventTime = processingTime.plusSeconds(MAX_FUTURE_SKEW + 1);
-        RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, futureEventTime));
-
-        assertThat(result.triggered()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Staleness check: accept future timestamp within allowed clock skew")
-    void shouldAcceptFutureTimestampWithinAllowedSkew() {
-        Instant processingTime = Instant.parse("2026-11-09T02:00:00Z");
-        Clock clock = Clock.fixed(processingTime, ZoneOffset.UTC);
-        UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+        UnusualHoursHighAmountRule ruleOutside = new UnusualHoursHighAmountRule(
+                buildProperties(true, 1, 4, "UTC")
         );
-
-        // Event time is 60 seconds into the future (within max skew of 300s)
-        Instant futureEventTime = processingTime.plusSeconds(60);
-        RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, futureEventTime));
-
-        assertThat(result.triggered()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Staleness check: reject historical timestamp older than max allowed age")
-    void shouldRejectTimestampOlderThanMaxAge() {
-        Instant processingTime = Instant.parse("2026-11-10T12:00:00Z");
-        Clock clock = Clock.fixed(processingTime, ZoneOffset.UTC);
-        UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
-        );
-
-        // Event timestamp was at 02:00 AM yesterday (25 hours ago, exceeding 24 hours max age)
-        Instant staleEventTime = processingTime.minusSeconds(MAX_PAST_AGE + 3600);
-        RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, staleEventTime));
-
-        assertThat(result.triggered()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Staleness check: accept timestamp within max allowed age")
-    void shouldAcceptTimestampWithinMaxAge() {
-        Instant processingTime = Instant.parse("2026-11-09T04:00:00Z");
-        Clock clock = Clock.fixed(processingTime, ZoneOffset.UTC);
-        UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
-        );
-
-        // Event timestamp was 2 hours ago (at 02:00 UTC, within unusual hours and within 24h)
-        Instant validEventTime = processingTime.minusSeconds(7200);
-        RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 1, validEventTime));
-
-        assertThat(result.triggered()).isTrue();
+        assertThat(ruleOutside.evaluate(createTransaction(THRESHOLD + 1, Instant.parse("2026-11-09T04:00:00Z"))).triggered()).isFalse();
     }
 
     @Test
     @DisplayName("Should not trigger when rule is disabled")
     void shouldNotTriggerWhenDisabled() {
-        Instant eventTime = Instant.parse("2026-11-09T02:00:00Z");
-        Clock clock = Clock.fixed(eventTime, ZoneOffset.UTC);
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(false, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(false, START_HOUR, END_HOUR, "UTC")
         );
+        Instant eventTime = Instant.parse("2026-11-09T02:00:00Z");
 
         RuleResult result = rule.evaluate(createTransaction(THRESHOLD + 100_000L, eventTime));
 
@@ -231,9 +169,8 @@ class UnusualHoursHighAmountRuleTest {
     @Test
     @DisplayName("Should safely handle null transaction or null timestamp")
     void shouldHandleNullTransactionSafely() {
-        Clock clock = Clock.systemUTC();
         UnusualHoursHighAmountRule rule = new UnusualHoursHighAmountRule(
-                buildProperties(true, START_HOUR, END_HOUR, "UTC"), clock
+                buildProperties(true, START_HOUR, END_HOUR, "UTC")
         );
 
         assertThat(rule.evaluate(null).triggered()).isFalse();
