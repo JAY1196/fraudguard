@@ -22,4 +22,6 @@ fraudguard:
       threshold-paise: 2000000
       weight: 40
       reason-code: UNUSUAL_HOURS_HIGH_AMOUNT
-      time-zone: UTC
+      time-zone: Asia/Kolkata
+      max-future-skew-seconds: 300
+      max-past-age-seconds: 86400

@@ -6,6 +6,7 @@ import com.fraudguard.domain.model.Transaction;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 
@@ -29,7 +30,7 @@ public class UnusualHoursHighAmountRule implements FraudRule {
 
     @Override
     public RuleResult evaluate(Transaction transaction) {
-        if (transaction == null) {
+        if (transaction == null || transaction.timestamp() == null) {
             return RuleResult.notTriggered(RULE_NAME);
         }
 
@@ -41,16 +42,29 @@ public class UnusualHoursHighAmountRule implements FraudRule {
             return RuleResult.notTriggered(RULE_NAME);
         }
 
-        Instant now = clock.instant();
-        ZoneId zoneId = ZoneId.of(config.timeZone() != null ? config.timeZone() : "UTC");
-        int currentHour = now.atZone(zoneId).getHour();
+        Instant eventTime = transaction.timestamp();
+        Instant processingTime = clock.instant();
+
+        // Staleness & Clock Skew Guard
+        if (eventTime.isAfter(processingTime.plusSeconds(config.maxFutureSkewSeconds()))) {
+            // Future timestamp beyond allowed clock skew: reject evaluation
+            return RuleResult.notTriggered(RULE_NAME);
+        }
+        if (eventTime.isBefore(processingTime.minusSeconds(config.maxPastAgeSeconds()))) {
+            // Stale timestamp older than allowed age: reject evaluation
+            return RuleResult.notTriggered(RULE_NAME);
+        }
+
+        // Event time converted to configured timezone
+        ZoneId zoneId = ZoneId.of(config.timeZone() != null ? config.timeZone() : "Asia/Kolkata");
+        int eventHour = eventTime.atZone(zoneId).getHour();
 
         boolean isUnusualHour;
         if (config.startHour() <= config.endHour()) {
-            isUnusualHour = currentHour >= config.startHour() && currentHour < config.endHour();
+            isUnusualHour = eventHour >= config.startHour() && eventHour < config.endHour();
         } else {
-            // Spans midnight, e.g., 23 to 5
-            isUnusualHour = currentHour >= config.startHour() || currentHour < config.endHour();
+            // Overnight window, e.g., 23 to 5
+            isUnusualHour = eventHour >= config.startHour() || eventHour < config.endHour();
         }
 
         boolean isHighAmount = transaction.amountPaise() > config.thresholdPaise();
