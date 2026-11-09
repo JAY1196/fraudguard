@@ -3,10 +3,12 @@ package com.fraudguard.domain.rule;
 import com.fraudguard.config.FraudGuardProperties;
 import com.fraudguard.domain.model.RuleResult;
 import com.fraudguard.domain.model.Transaction;
+import com.fraudguard.domain.model.TransactionType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -17,6 +19,9 @@ class UnusualHoursHighAmountRuleTest {
     private static final String REASON_CODE = "UNUSUAL_HOURS_HIGH_AMOUNT";
     private static final int START_HOUR = 23;
     private static final int END_HOUR = 5;
+    private static final UUID EVENT_ID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    private static final UUID SRC_WALLET = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    private static final UUID DST_WALLET = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     private FraudGuardProperties buildProperties(boolean enabled, int start, int end, String timeZone) {
         return new FraudGuardProperties(
@@ -33,11 +38,12 @@ class UnusualHoursHighAmountRuleTest {
 
     private Transaction createTransaction(long amountPaise, Instant timestamp) {
         return new Transaction(
-                "evt-test",
-                "wallet-src",
-                "wallet-dst",
+                EVENT_ID,
+                SRC_WALLET,
+                DST_WALLET,
                 amountPaise,
-                "TRANSFER",
+                TransactionType.TRANSFER,
+                "INR",
                 timestamp
         );
     }

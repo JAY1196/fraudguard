@@ -59,6 +59,7 @@ public class RiskEvaluationController {
                 request.destinationWalletId(),
                 request.amountPaise(),
                 request.type(),
+                request.currency(),
                 request.timestamp()
         );
 

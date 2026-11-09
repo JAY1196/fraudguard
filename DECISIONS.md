@@ -69,3 +69,28 @@ Allocate non-overlapping ports:
 - PostgreSQL: `127.0.0.1:5433` (Standard default `5432`)
 - Redis: `127.0.0.1:6381` (WalletLedger uses `6380`, standard default `6379`)
 All ports are bound strictly to localhost (`127.0.0.1`).
+
+---
+
+## ADR 006: Windows Maven Wrapper Exit Code Handling
+
+### Context
+When running `.\mvnw.cmd clean verify` in PowerShell on Windows, Apache Maven Wrapper 3.3.4 returned `$LASTEXITCODE = 1` even when Maven reported `BUILD SUCCESS`. This was caused by the wrapper falling through the conditional block into `@echo Cannot start maven from wrapper >&2 && exit /b 1` when returning from the child batch script.
+
+### Decision
+Add explicit `@exit /b %ERRORLEVEL%` within the wrapper invocation block in `mvnw.cmd` so the process terminates with the exact exit code produced by Maven. Note: This wrapper patch affects Windows local developer environments only; Linux CI environments invoke `./mvnw` with POSIX shell semantics.
+
+---
+
+## ADR 007: Event Contract Alignment with WalletLedger
+
+### Context
+FraudGuard evaluates transactions originating from the WalletLedger platform. The contracts must align exactly so that ledger domain events map to fraud evaluation requests without intermediate transformations.
+
+### Decision
+1. **Naming**: Use snake_case JSON serialization matching ledger events (`event_id`, `source_wallet_id`, `destination_wallet_id`, `amount_paise`, `type`, `currency`, `timestamp`).
+2. **Identifier Typing**: Enforce canonical UUID format for `event_id`, `source_wallet_id`, and `destination_wallet_id`.
+3. **Transaction Types**: Restrict transaction classification to the canonical four ledger types: `TOPUP`, `TRANSFER`, `WITHDRAWAL`, `REVERSAL`.
+4. **Currency Default**: Default `currency` to `INR` when omitted or blank.
+5. **Error Contract**: Invalid UUID representations or unsupported transaction type strings return HTTP 400 with RFC 9457 ProblemDetail and code `VALIDATION_ERROR`.
+

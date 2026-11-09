@@ -3,11 +3,13 @@ package com.fraudguard.domain.rule;
 import com.fraudguard.config.FraudGuardProperties;
 import com.fraudguard.domain.model.RuleResult;
 import com.fraudguard.domain.model.Transaction;
+import com.fraudguard.domain.model.TransactionType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,6 +18,9 @@ class HighAmountRuleTest {
     private static final long THRESHOLD = 5_000_000L; // 50,000 INR
     private static final int WEIGHT = 50;
     private static final String REASON_CODE = "HIGH_AMOUNT";
+    private static final UUID EVENT_ID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    private static final UUID SRC_WALLET = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    private static final UUID DST_WALLET = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     private FraudGuardProperties properties;
     private HighAmountRule rule;
@@ -35,11 +40,12 @@ class HighAmountRuleTest {
 
     private Transaction createTransaction(long amountPaise) {
         return new Transaction(
-                "evt-test",
-                "wallet-src",
-                "wallet-dst",
+                EVENT_ID,
+                SRC_WALLET,
+                DST_WALLET,
                 amountPaise,
-                "TRANSFER",
+                TransactionType.TRANSFER,
+                "INR",
                 Instant.parse("2026-11-09T10:00:00Z")
         );
     }

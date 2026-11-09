@@ -1,5 +1,6 @@
 package com.fraudguard.exception;
 
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -12,6 +13,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -53,11 +55,11 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleMessageNotReadable(HttpMessageNotReadableException ex) {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
                 HttpStatus.BAD_REQUEST,
-                "Malformed JSON request body"
+                resolveMessageNotReadableDetail(ex)
         );
-        problemDetail.setTitle("Malformed JSON");
-        problemDetail.setType(URI.create("urn:problem:malformed-json"));
-        problemDetail.setProperty("code", "MALFORMED_JSON");
+        problemDetail.setTitle("Bad Request");
+        problemDetail.setType(URI.create("urn:problem:validation-error"));
+        problemDetail.setProperty("code", "VALIDATION_ERROR");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;
     }
@@ -73,5 +75,17 @@ public class GlobalExceptionHandler {
         problemDetail.setProperty("code", "INTERNAL_SERVER_ERROR");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;
+    }
+
+    private String resolveMessageNotReadableDetail(HttpMessageNotReadableException ex) {
+        Throwable cause = ex.getMostSpecificCause();
+        String message = cause != null && cause.getMessage() != null ? cause.getMessage() : "";
+        if (message.contains("UUID")) {
+            return "Invalid UUID format: " + message;
+        }
+        if (message.contains("TransactionType") || message.contains("Enum")) {
+            return "Invalid value for field 'type': not one of the allowed values [TOPUP, TRANSFER, WITHDRAWAL, REVERSAL]";
+        }
+        return "Malformed JSON request body";
     }
 }

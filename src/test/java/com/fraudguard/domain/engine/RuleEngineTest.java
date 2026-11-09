@@ -5,6 +5,7 @@ import com.fraudguard.domain.model.EvaluationResult;
 import com.fraudguard.domain.model.RiskDecision;
 import com.fraudguard.domain.model.RuleResult;
 import com.fraudguard.domain.model.Transaction;
+import com.fraudguard.domain.model.TransactionType;
 import com.fraudguard.domain.rule.FraudRule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -17,6 +18,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -39,6 +41,10 @@ class RuleEngineTest {
     private FraudGuardProperties properties;
     private Transaction sampleTransaction;
 
+    private static final UUID EVENT_ID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    private static final UUID SRC_WALLET = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    private static final UUID DST_WALLET = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
     @BeforeEach
     void setUp() {
         fixedClock = Clock.fixed(Instant.parse("2026-11-09T00:00:00Z"), ZoneOffset.UTC);
@@ -48,11 +54,12 @@ class RuleEngineTest {
                 null
         );
         sampleTransaction = new Transaction(
-                "evt-100",
-                "wallet-src-1",
-                "wallet-dst-1",
+                EVENT_ID,
+                SRC_WALLET,
+                DST_WALLET,
                 50000L,
-                "TRANSFER",
+                TransactionType.TRANSFER,
+                "INR",
                 fixedClock.instant()
         );
     }

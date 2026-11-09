@@ -1,12 +1,14 @@
 package com.fraudguard.domain.model;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record Transaction(
-        String eventId,
-        String sourceWalletId,
-        String destinationWalletId,
+        UUID eventId,
+        UUID sourceWalletId,
+        UUID destinationWalletId,
         long amountPaise,
-        String type,
+        TransactionType type,
+        String currency,
         Instant timestamp
 ) {}
