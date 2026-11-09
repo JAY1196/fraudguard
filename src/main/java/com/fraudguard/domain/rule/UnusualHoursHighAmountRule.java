@@ -5,8 +5,6 @@ import com.fraudguard.domain.model.RuleResult;
 import com.fraudguard.domain.model.Transaction;
 import org.springframework.stereotype.Component;
 
-import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 
@@ -16,11 +14,9 @@ public class UnusualHoursHighAmountRule implements FraudRule {
     public static final String RULE_NAME = "UNUSUAL_HOURS_HIGH_AMOUNT";
 
     private final FraudGuardProperties properties;
-    private final Clock clock;
 
-    public UnusualHoursHighAmountRule(FraudGuardProperties properties, Clock clock) {
+    public UnusualHoursHighAmountRule(FraudGuardProperties properties) {
         this.properties = properties;
-        this.clock = clock;
     }
 
     @Override
@@ -42,20 +38,8 @@ public class UnusualHoursHighAmountRule implements FraudRule {
             return RuleResult.notTriggered(RULE_NAME);
         }
 
+        // Rule always evaluates event time converted to configured timezone
         Instant eventTime = transaction.timestamp();
-        Instant processingTime = clock.instant();
-
-        // Staleness & Clock Skew Guard
-        if (eventTime.isAfter(processingTime.plusSeconds(config.maxFutureSkewSeconds()))) {
-            // Future timestamp beyond allowed clock skew: reject evaluation
-            return RuleResult.notTriggered(RULE_NAME);
-        }
-        if (eventTime.isBefore(processingTime.minusSeconds(config.maxPastAgeSeconds()))) {
-            // Stale timestamp older than allowed age: reject evaluation
-            return RuleResult.notTriggered(RULE_NAME);
-        }
-
-        // Event time converted to configured timezone
         ZoneId zoneId = ZoneId.of(config.timeZone() != null ? config.timeZone() : "Asia/Kolkata");
         int eventHour = eventTime.atZone(zoneId).getHour();
 

@@ -6,15 +6,17 @@
 Fraud detection rules inspect temporal patterns (such as transactions occurring during unusual overnight hours). In distributed financial architectures, the time an event occurred at the ledger or client (`transaction.timestamp`, Event Time) frequently differs from the time the fraud service processes the request (`Processing Time`), due to network latency, retry backoffs, or message queue delays.
 
 ### Decision
-1. **Rule Evaluation on Event Time**: Time-dependent rules (such as `UnusualHoursHighAmountRule`) evaluate the transaction against `transaction.timestamp()` converted to the configured business timezone (`Asia/Kolkata` by default). This guarantees evaluation determinism regardless of where the server is hosted or how long a message was in flight.
-2. **Clock Injection for Processing-Time Guards**: The service injects a `java.time.Clock` bean strictly for processing-time enforcement:
-   - **Future Clock Skew Guard**: Rejects timestamps where `eventTime > processingTime + maxFutureSkewSeconds` (default 300s). Protects against spoofed future timestamps intended to bypass time-of-day checks.
-   - **Staleness Guard**: Rejects timestamps where `eventTime < processingTime - maxPastAgeSeconds` (default 86400s / 24h). Prevents replayed or ancient events from triggering anomalous time penalties.
-   - **Audit Timestamp**: Used for recording `evaluated_at` processing time upon decision persistence.
+1. **Rule Evaluation on Event Time**: Time-dependent rules (such as `UnusualHoursHighAmountRule`) evaluate the transaction against `transaction.timestamp()` converted to the configured business timezone (`Asia/Kolkata` by default). Rules do not silently drop or mutate evaluations based on server wall-clock drift.
+2. **API-Level Timestamp Boundary Validation**:
+   - **Forward-Dating Protection (Clock Skew)**: Transactions with timestamps ahead of the server `Clock` beyond a configurable skew (`maxFutureSkewSeconds`, default 300s / 5 minutes) are rejected immediately at the API perimeter with `HTTP 400` and error code `TIMESTAMP_OUT_OF_RANGE`. This prevents adversaries from forward-dating transactions to bypass sliding-window counters or avoid time-based anomaly penalties.
+   - **Historical Staleness & Replay Protection**: A configurable `maxPastAgeSeconds` threshold is provided at the API validator. It is **OFF by default** (`null`) so that:
+     1. Offline reconciliations and backfilling transactions succeed without rejection.
+     2. Synthetic fraud simulators and test suites can replay recorded traffic across arbitrary historical time horizons.
+   - **Audit Timestamp**: Persisted decisions retain a distinct `evaluated_at` column capturing the exact processing time (`clock.instant()`).
 
 ### Trade-offs
-- *Advantage*: Deterministic, replayable rule evaluation; testable via `Clock.fixed(...)`; robust against network lag.
-- *Disadvantage*: Requires explicit bounds on acceptable clock drift between ledger and fraud service.
+- *Advantage*: Deterministic rule scoring; rejection is transparent to calling clients via RFC 9457 ProblemDetail rather than silent score corruption; supports high-fidelity replay simulation.
+- *Disadvantage*: Requires distributed clients to maintain reasonably synchronized clocks (NTP within 5 minutes).
 
 ---
 
@@ -34,7 +36,7 @@ Chain of Responsibility typically short-circuits on the first match. In fraud ri
 ## ADR 003: Clock Injection for Testability
 
 ### Context
-Rules dependent on system time often lead to flaky tests or require bytecode manipulation (e.g. PowerMock) when using `Instant.now()`.
+Rules and validators dependent on system time often lead to flaky tests or require bytecode manipulation (e.g. PowerMock) when using `Instant.now()`.
 
 ### Decision
 Inject `java.time.Clock` as a managed Spring bean (`ClockConfig`). Production uses `Clock.systemUTC()`, while unit and integration tests inject `Clock.fixed(...)`.

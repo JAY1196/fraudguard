@@ -9,6 +9,8 @@ fraudguard:
   thresholds:
     review: 40
     block: 70
+  validation:
+    max-future-skew-seconds: 300
   rules:
     high-amount:
       enabled: true
@@ -23,5 +25,3 @@ fraudguard:
       weight: 40
       reason-code: UNUSUAL_HOURS_HIGH_AMOUNT
       time-zone: Asia/Kolkata
-      max-future-skew-seconds: 300
-      max-past-age-seconds: 86400

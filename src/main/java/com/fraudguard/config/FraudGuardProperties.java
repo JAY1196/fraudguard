@@ -14,7 +14,8 @@ import java.time.ZoneId;
 @ConfigurationProperties(prefix = "fraudguard")
 public record FraudGuardProperties(
         @Valid @NotNull ThresholdProperties thresholds,
-        @Valid RulesProperties rules
+        @Valid RulesProperties rules,
+        @Valid ValidationProperties validation
 ) {
     public FraudGuardProperties {
         if (thresholds == null) {
@@ -22,6 +23,9 @@ public record FraudGuardProperties(
         }
         if (rules == null) {
             rules = new RulesProperties(null, null);
+        }
+        if (validation == null) {
+            validation = new ValidationProperties(300L, null);
         }
     }
 
@@ -52,7 +56,7 @@ public record FraudGuardProperties(
             }
             if (unusualHours == null) {
                 unusualHours = new UnusualHoursRuleProperties(
-                        true, 23, 5, 2_000_000L, 40, "UNUSUAL_HOURS_HIGH_AMOUNT", "Asia/Kolkata", 300L, 86400L
+                        true, 23, 5, 2_000_000L, 40, "UNUSUAL_HOURS_HIGH_AMOUNT", "Asia/Kolkata"
                 );
             }
         }
@@ -81,9 +85,7 @@ public record FraudGuardProperties(
             @Min(1) long thresholdPaise,
             @Min(1) @Max(100) int weight,
             @NotBlank String reasonCode,
-            @NotBlank String timeZone,
-            @Min(0) long maxFutureSkewSeconds,
-            @Min(0) long maxPastAgeSeconds
+            @NotBlank String timeZone
     ) {
         public UnusualHoursRuleProperties {
             if (startHour < 0 || startHour > 23) {
@@ -106,11 +108,19 @@ public record FraudGuardProperties(
             } catch (Exception e) {
                 throw new IllegalArgumentException("Invalid timeZone: '" + timeZone + "'", e);
             }
+        }
+    }
+
+    public record ValidationProperties(
+            @Min(0) long maxFutureSkewSeconds,
+            Long maxPastAgeSeconds
+    ) {
+        public ValidationProperties {
             if (maxFutureSkewSeconds < 0) {
-                throw new IllegalArgumentException("maxFutureSkewSeconds must be >= 0");
+                throw new IllegalArgumentException("maxFutureSkewSeconds must be >= 0 (got " + maxFutureSkewSeconds + ")");
             }
-            if (maxPastAgeSeconds < 0) {
-                throw new IllegalArgumentException("maxPastAgeSeconds must be >= 0");
+            if (maxPastAgeSeconds != null && maxPastAgeSeconds < 0) {
+                throw new IllegalArgumentException("maxPastAgeSeconds must be >= 0 (got " + maxPastAgeSeconds + ")");
             }
         }
     }
