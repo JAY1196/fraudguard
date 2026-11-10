@@ -1,6 +1,5 @@
 package com.fraudguard.exception;
 
-import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -13,7 +12,6 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -47,6 +45,19 @@ public class GlobalExceptionHandler {
         problemDetail.setTitle("Timestamp Out Of Range");
         problemDetail.setType(URI.create("urn:problem:timestamp-out-of-range"));
         problemDetail.setProperty("code", "TIMESTAMP_OUT_OF_RANGE");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    @ExceptionHandler(EventPayloadMismatchException.class)
+    public ProblemDetail handleEventPayloadMismatchException(EventPayloadMismatchException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                ex.getMessage()
+        );
+        problemDetail.setTitle("Event Payload Mismatch");
+        problemDetail.setType(URI.create("urn:problem:event-payload-mismatch"));
+        problemDetail.setProperty("code", "EVENT_PAYLOAD_MISMATCH");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;
     }

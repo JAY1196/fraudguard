@@ -1,5 +1,6 @@
 package com.fraudguard.domain.store;
 
+import com.fraudguard.exception.EventPayloadMismatchException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 class RedisStateStoreTest {
@@ -99,18 +101,75 @@ class RedisStateStoreTest {
     }
 
     @Test
-    @DisplayName("Out-of-order events: earlier event within window is properly inserted and counted")
+    @DisplayName("Out-of-order semantics: late event counts strictly within [event_ts - window, event_ts] and preserves newer state")
     void shouldHandleOutOfOrderEventsWithinWindow() {
         String key = "fraudguard:velocity:" + UUID.randomUUID();
         long windowMs = 60_000L;
         long ttlSeconds = 120L;
 
-        // Later event arrives first
-        stateStore.recordAndCountSlidingWindow(key, "evt-later", 50_000L, windowMs, ttlSeconds);
+        // 1. A later event arrives first at t=50,000
+        long countLater = stateStore.recordAndCountSlidingWindow(key, "evt-later", 50_000L, windowMs, ttlSeconds);
+        assertThat(countLater).isEqualTo(1L);
 
-        // Out-of-order earlier event arrives second (within 60s window of 50_000)
-        long count = stateStore.recordAndCountSlidingWindow(key, "evt-earlier", 20_000L, windowMs, ttlSeconds);
-        assertThat(count).isEqualTo(2L);
+        // 2. An out-of-order late event arrives second with t=20,000 (window [-40_000, 20_000])
+        // It must count ONLY events in its window, so count is 1 (evt-later at 50,000 is in its future)
+        long countEarlier = stateStore.recordAndCountSlidingWindow(key, "evt-earlier", 20_000L, windowMs, ttlSeconds);
+        assertThat(countEarlier).isEqualTo(1L);
+
+        // 3. Newer state at 50,000 must NOT have been deleted by the late event
+        Double scoreLater = redisTemplate.opsForZSet().score(key, "evt-later");
+        assertThat(scoreLater).isEqualTo(50_000.0);
+
+        // 4. A subsequent event arrives at t=55,000 (window [-5_000, 55_000])
+        // Both evt-earlier (20k) and evt-later (50k) are in its window, so count is 3
+        long countSubsequent = stateStore.recordAndCountSlidingWindow(key, "evt-subsequent", 55_000L, windowMs, ttlSeconds);
+        assertThat(countSubsequent).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("Out-of-order late event: never deletes newer state and relies on TTL for cleanup")
+    void shouldNotDeleteNewerStateWhenLateEventArrives() {
+        String key = "fraudguard:velocity:" + UUID.randomUUID();
+        long windowMs = 30_000L; // 30s window
+        long ttlSeconds = 300L;
+
+        // Current event at t=100,000
+        stateStore.recordAndCountSlidingWindow(key, "evt-100k", 100_000L, windowMs, ttlSeconds);
+
+        // Late event arrives at t=60,000 (window [30,000, 60,000])
+        long lateCount = stateStore.recordAndCountSlidingWindow(key, "evt-60k", 60_000L, windowMs, ttlSeconds);
+        assertThat(lateCount).isEqualTo(1L);
+
+        // Verify newer event at 100,000 was NOT deleted by the late event
+        Double score100k = redisTemplate.opsForZSet().score(key, "evt-100k");
+        assertThat(score100k).isEqualTo(100_000.0);
+
+        // Key TTL is refreshed and positive
+        Long expire = redisTemplate.getExpire(key, TimeUnit.SECONDS);
+        assertThat(expire).isNotNull().isGreaterThan(0L);
+    }
+
+    @Test
+    @DisplayName("Future event: counts events in window and prunes expired entries older than [future_ts - window]")
+    void shouldCountFutureEventAndPruneStale() {
+        String key = "fraudguard:velocity:" + UUID.randomUUID();
+        long windowMs = 30_000L; // 30s window
+        long ttlSeconds = 120L;
+
+        // Event at t=10,000 and t=20,000
+        stateStore.recordAndCountSlidingWindow(key, "evt-10k", 10_000L, windowMs, ttlSeconds);
+        stateStore.recordAndCountSlidingWindow(key, "evt-20k", 20_000L, windowMs, ttlSeconds);
+
+        // Future event at t=80,000 (window [50,000, 80,000])
+        // Both 10k and 20k are < 50k and must be pruned
+        long count = stateStore.recordAndCountSlidingWindow(key, "evt-80k", 80_000L, windowMs, ttlSeconds);
+        assertThat(count).isEqualTo(1L);
+
+        // Verify stale entries were pruned
+        Double score10k = redisTemplate.opsForZSet().score(key, "evt-10k");
+        Double score20k = redisTemplate.opsForZSet().score(key, "evt-20k");
+        assertThat(score10k).isNull();
+        assertThat(score20k).isNull();
     }
 
     @Test
@@ -189,6 +248,26 @@ class RedisStateStoreTest {
         stateStore.recordAmount(key, "evt-4", 400_000L, 4000L, maxHistory, ttlSeconds);
         List<Long> trimmed = stateStore.getRecentAmounts(key);
         assertThat(trimmed).containsExactly(200_000L, 300_000L, 400_000L);
+    }
+
+    @Test
+    @DisplayName("Duplicate event_id with different amount throws EventPayloadMismatchException; identical replay succeeds")
+    void shouldRejectDuplicateEventIdWithDifferentAmount() {
+        String key = "fraudguard:amounts:" + UUID.randomUUID();
+        int maxHistory = 5;
+        long ttlSeconds = 300L;
+
+        // 1. Initial record
+        stateStore.recordAmount(key, "evt-fixed", 50_000L, 1000L, maxHistory, ttlSeconds);
+
+        // 2. Exact replay with same amount succeeds idempotently
+        stateStore.recordAmount(key, "evt-fixed", 50_000L, 1000L, maxHistory, ttlSeconds);
+        assertThat(stateStore.getRecentAmounts(key)).containsExactly(50_000L);
+
+        // 3. Replay with DIFFERENT amount throws EventPayloadMismatchException
+        assertThatThrownBy(() -> stateStore.recordAmount(key, "evt-fixed", 100_000L, 1000L, maxHistory, ttlSeconds))
+                .isInstanceOf(EventPayloadMismatchException.class)
+                .hasMessageContaining("already evaluated with a different amount");
     }
 
     @Test

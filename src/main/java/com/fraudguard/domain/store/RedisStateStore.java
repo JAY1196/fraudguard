@@ -1,5 +1,6 @@
 package com.fraudguard.domain.store;
 
+import com.fraudguard.exception.EventPayloadMismatchException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
@@ -74,15 +75,26 @@ public class RedisStateStore implements StateStore {
 
     @Override
     public void recordAmount(String key, String member, long amountPaise, long scoreMs, int maxHistory, long ttlSeconds) {
-        String memberWithAmount = member + ":" + amountPaise;
-        redisTemplate.execute(
-                recordAmountScript,
-                Collections.singletonList(key),
-                memberWithAmount,
-                String.valueOf(scoreMs),
-                String.valueOf(maxHistory),
-                String.valueOf(ttlSeconds)
-        );
+        try {
+            redisTemplate.execute(
+                    recordAmountScript,
+                    Collections.singletonList(key),
+                    member,
+                    String.valueOf(amountPaise),
+                    String.valueOf(scoreMs),
+                    String.valueOf(maxHistory),
+                    String.valueOf(ttlSeconds)
+            );
+        } catch (Exception e) {
+            Throwable root = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(e);
+            String msg = root != null && root.getMessage() != null ? root.getMessage() : e.getMessage();
+            if (msg != null && msg.contains("EVENT_PAYLOAD_MISMATCH")) {
+                throw new EventPayloadMismatchException(
+                        "Conflicting transaction payload: event_id '" + member + "' was already evaluated with a different amount."
+                );
+            }
+            throw e;
+        }
     }
 
     @Override

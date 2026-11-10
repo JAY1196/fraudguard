@@ -124,16 +124,35 @@ FraudGuard evaluates transactions originating from the WalletLedger platform. Th
 
 ---
 
-## ADR 008: StateStore Abstraction and Atomic Redis Sliding-Window Execution via Lua
+## ADR 008: StateStore Abstraction, Atomic Sliding Windows, and Out-of-Order Semantics
 
 ### Context
-Stateful fraud detection rules (such as transaction velocity in a sliding window and recent amount spike detection) require storing and querying historical events per wallet. Directly coupling fraud rules to `StringRedisTemplate` harms unit-testability, while issuing multi-step sequential Redis network calls (`ZREMRANGEBYSCORE` then `ZADD` then `ZCARD` then `EXPIRE`) creates severe race conditions under concurrent requests and incurs 4 network round-trips per evaluation.
+Stateful fraud detection rules (such as transaction velocity in a sliding window and recent amount spike detection) require storing and querying historical events per wallet. Directly coupling fraud rules to `StringRedisTemplate` harms unit-testability, while issuing multi-step sequential Redis network calls creates race conditions and network round-trips. Furthermore, distributed transactions can arrive out-of-order due to network jitter.
 
 ### Decision
 1. **Domain Abstraction (`StateStore`)**: Define an interface isolating all persistence and window operations from rule logic. Rules collaborate exclusively with `StateStore`, enabling 100% Mockito unit tests without spinning up Docker/Redis.
 2. **Single-Roundtrip Atomic Lua Execution (`RedisStateStore`)**:
-   - `sliding_window.lua` executes `ZREMRANGEBYSCORE`, `ZADD`, `ZCARD`, and `EXPIRE` atomically within Redis server single-threaded execution context in one round-trip.
+   - `sliding_window.lua` executes `ZREMRANGEBYSCORE`, `ZADD`, `ZCOUNT`, and `EXPIRE` atomically within Redis server single-threaded execution context in one round-trip.
    - `record_amount.lua` executes `ZADD`, `ZREMRANGEBYRANK`, and `EXPIRE` atomically to maintain a bounded chronological history of recent amounts.
-3. **Event Time Window**: Window boundary is strictly computed from `transaction.timestamp()` in epoch ms (`scoreMs - windowMs`) per ADR 001.
+3. **Out-of-Order Semantics & Interval Counting**:
+   - Window count is computed strictly across `[event_ts - window, event_ts]` via `ZCOUNT key (event_ts - window) event_ts`.
+   - An out-of-order late event counts strictly the events that occurred up to its own timestamp; it does not count events with timestamps in its future.
+   - Older events **never delete newer state**: `ZREMRANGEBYSCORE key -inf (event_ts - window)` only prunes items strictly before the window; any items with `timestamp >= event_ts` remain untouched.
+   - Cleanup of dormant keys relies on atomic `EXPIRE key ttl_sec` refreshed on every evaluation.
 4. **Idempotency & Deduplication**: Event IDs serve as sorted set members; re-evaluating the same event ID updates the member score in-place without incrementing cardinality.
 5. **Memory Safety**: Every state mutation sets an idle TTL on the key, ensuring dormant wallet keys are automatically collected by Redis.
+
+---
+
+## ADR 009: Conflict Detection on Event ID Mutation
+
+### Context
+In distributed financial architectures, an `event_id` is a globally unique, immutable identifier representing a specific business event. What should happen if an evaluation request arrives with an already-recorded `event_id` but with a conflicting amount?
+
+### Decision
+1. **Rejection with HTTP 400**: Re-submitting an existing `event_id` with a different transaction amount is treated as an integrity conflict and rejected immediately with `HTTP 400 Bad Request`, RFC 9457 `ProblemDetail`, and error code `EVENT_PAYLOAD_MISMATCH`.
+2. **Rationale**:
+   - Silently ignoring the new amount or updating the historical baseline risks accepting corrupted or tampered ledger entries.
+   - Rejecting with `EVENT_PAYLOAD_MISMATCH` alerts the upstream caller (WalletLedger) to a serious payload divergence or identifier collision.
+3. **Idempotent Replay**: Re-submitting the exact same `event_id` with an identical amount is an idempotent no-op and succeeds without error or duplicate history entry.
+
