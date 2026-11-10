@@ -1,0 +1,104 @@
+package com.fraudguard.domain.store;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.scripting.support.ResourceScriptSource;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+
+@Component
+public class RedisStateStore implements StateStore {
+
+    private static final Logger log = LoggerFactory.getLogger(RedisStateStore.class);
+
+    private final StringRedisTemplate redisTemplate;
+    private final RedisScript<Long> slidingWindowScript;
+    private final RedisScript<Long> recordAmountScript;
+
+    public RedisStateStore(StringRedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+
+        DefaultRedisScript<Long> swScript = new DefaultRedisScript<>();
+        swScript.setScriptSource(new ResourceScriptSource(new ClassPathResource("scripts/sliding_window.lua")));
+        swScript.setResultType(Long.class);
+        this.slidingWindowScript = swScript;
+
+        DefaultRedisScript<Long> raScript = new DefaultRedisScript<>();
+        raScript.setScriptSource(new ResourceScriptSource(new ClassPathResource("scripts/record_amount.lua")));
+        raScript.setResultType(Long.class);
+        this.recordAmountScript = raScript;
+    }
+
+    @Override
+    public long recordAndCountSlidingWindow(String key, String member, long scoreMs, long windowMs, long ttlSeconds) {
+        Long count = redisTemplate.execute(
+                slidingWindowScript,
+                Collections.singletonList(key),
+                member,
+                String.valueOf(scoreMs),
+                String.valueOf(windowMs),
+                String.valueOf(ttlSeconds)
+        );
+        return count != null ? count : 0L;
+    }
+
+    @Override
+    public List<Long> getRecentAmounts(String key) {
+        Set<String> entries = redisTemplate.opsForZSet().range(key, 0, -1);
+        if (entries == null || entries.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Long> amounts = new ArrayList<>(entries.size());
+        for (String entry : entries) {
+            int colonIndex = entry.indexOf(':');
+            if (colonIndex >= 0 && colonIndex < entry.length() - 1) {
+                try {
+                    amounts.add(Long.parseLong(entry.substring(colonIndex + 1)));
+                } catch (NumberFormatException e) {
+                    log.warn("Malformed amount history entry in key '{}': {}", key, entry);
+                }
+            }
+        }
+        return amounts;
+    }
+
+    @Override
+    public void recordAmount(String key, String member, long amountPaise, long scoreMs, int maxHistory, long ttlSeconds) {
+        String memberWithAmount = member + ":" + amountPaise;
+        redisTemplate.execute(
+                recordAmountScript,
+                Collections.singletonList(key),
+                memberWithAmount,
+                String.valueOf(scoreMs),
+                String.valueOf(maxHistory),
+                String.valueOf(ttlSeconds)
+        );
+    }
+
+    @Override
+    public boolean isHealthy() {
+        try {
+            var connectionFactory = redisTemplate.getConnectionFactory();
+            if (connectionFactory == null) {
+                return false;
+            }
+            try (RedisConnection connection = connectionFactory.getConnection()) {
+                String pong = connection.ping();
+                return "PONG".equalsIgnoreCase(pong);
+            }
+        } catch (Exception e) {
+            log.warn("Redis health check failed: {}", e.getMessage());
+            return false;
+        }
+    }
+}

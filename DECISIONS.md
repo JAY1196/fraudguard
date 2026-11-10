@@ -121,3 +121,19 @@ FraudGuard evaluates transactions originating from the WalletLedger platform. Th
 
 5. **Error Contract:** Invalid UUID representations or unsupported transaction type strings return HTTP 400 with RFC 9457 ProblemDetail and code `VALIDATION_ERROR`.
 
+
+---
+
+## ADR 008: StateStore Abstraction and Atomic Redis Sliding-Window Execution via Lua
+
+### Context
+Stateful fraud detection rules (such as transaction velocity in a sliding window and recent amount spike detection) require storing and querying historical events per wallet. Directly coupling fraud rules to `StringRedisTemplate` harms unit-testability, while issuing multi-step sequential Redis network calls (`ZREMRANGEBYSCORE` then `ZADD` then `ZCARD` then `EXPIRE`) creates severe race conditions under concurrent requests and incurs 4 network round-trips per evaluation.
+
+### Decision
+1. **Domain Abstraction (`StateStore`)**: Define an interface isolating all persistence and window operations from rule logic. Rules collaborate exclusively with `StateStore`, enabling 100% Mockito unit tests without spinning up Docker/Redis.
+2. **Single-Roundtrip Atomic Lua Execution (`RedisStateStore`)**:
+   - `sliding_window.lua` executes `ZREMRANGEBYSCORE`, `ZADD`, `ZCARD`, and `EXPIRE` atomically within Redis server single-threaded execution context in one round-trip.
+   - `record_amount.lua` executes `ZADD`, `ZREMRANGEBYRANK`, and `EXPIRE` atomically to maintain a bounded chronological history of recent amounts.
+3. **Event Time Window**: Window boundary is strictly computed from `transaction.timestamp()` in epoch ms (`scoreMs - windowMs`) per ADR 001.
+4. **Idempotency & Deduplication**: Event IDs serve as sorted set members; re-evaluating the same event ID updates the member score in-place without incrementing cardinality.
+5. **Memory Safety**: Every state mutation sets an idle TTL on the key, ensuring dormant wallet keys are automatically collected by Redis.
