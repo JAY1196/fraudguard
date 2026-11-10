@@ -9,8 +9,15 @@ target/
 *.iml
 .vscode/
 *.swp
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
 
-# Environment
+# Environment & Secrets
 .env
 *.log
 
