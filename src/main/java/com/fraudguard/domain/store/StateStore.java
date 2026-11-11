@@ -38,6 +38,28 @@ public interface StateStore {
     void recordAmount(String key, String member, long amountPaise, long scoreMs, int maxHistory, long ttlSeconds);
 
     /**
+     * Atomically retrieves the prior transaction baseline and records the current event.
+     * Replays return the original baseline snapshot.
+     *
+     * @param key amount-history Redis key
+     * @param eventId unique event identifier
+     * @param amountPaise current transaction amount
+     * @param scoreMs event timestamp in epoch milliseconds
+     * @param historySize maximum number of prior amounts to return
+     * @param maxHistory maximum amount-history entries to retain
+     * @param ttlSeconds Redis retention period
+     * @return prior transaction amounts in chronological order
+     */
+    List<Long> recordAndGetPriorAmounts(
+            String key,
+            String eventId,
+            long amountPaise,
+            long scoreMs,
+            int historySize,
+            int maxHistory,
+            long ttlSeconds
+    );
+    /**
      * Verifies store connectivity and operational status.
      *
      * @return true if store is reachable and operational, false otherwise

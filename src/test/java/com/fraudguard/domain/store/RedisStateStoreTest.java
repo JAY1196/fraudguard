@@ -1,5 +1,6 @@
 package com.fraudguard.domain.store;
 
+import com.fraudguard.exception.AmountSpikeSnapshotExpiredException;
 import com.fraudguard.exception.EventPayloadMismatchException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -274,5 +275,181 @@ class RedisStateStoreTest {
     @DisplayName("Health check: reports true when Redis is reachable")
     void shouldReportHealthy() {
         assertThat(stateStore.isHealthy()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Amount spike: returns only prior transactions and excludes current transaction")
+    void shouldReturnOnlyPriorAmountsAndExcludeCurrentTransaction() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+        int historySize = 5;
+        int maxHistory = 100;
+        long ttlSeconds = 300L;
+
+        List<Long> first = stateStore.recordAndGetPriorAmounts(
+                key, "evt-1", 10_000L, 1_000L, historySize, maxHistory, ttlSeconds);
+
+        List<Long> second = stateStore.recordAndGetPriorAmounts(
+                key, "evt-2", 20_000L, 2_000L, historySize, maxHistory, ttlSeconds);
+
+        List<Long> third = stateStore.recordAndGetPriorAmounts(
+                key, "evt-3", 30_000L, 3_000L, historySize, maxHistory, ttlSeconds);
+
+        List<Long> fourth = stateStore.recordAndGetPriorAmounts(
+                key, "evt-4", 40_000L, 4_000L, historySize, maxHistory, ttlSeconds);
+
+        assertThat(first).isEmpty();
+        assertThat(second).containsExactly(10_000L);
+        assertThat(third).containsExactly(10_000L, 20_000L);
+        assertThat(fourth).containsExactly(10_000L, 20_000L, 30_000L);
+    }
+
+    @Test
+    @DisplayName("Amount spike: exact replay returns the original baseline")
+    void shouldReturnOriginalBaselineForExactReplay() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+
+        stateStore.recordAndGetPriorAmounts(
+                key, "evt-1", 10_000L, 1_000L, 5, 100, 300L);
+
+        stateStore.recordAndGetPriorAmounts(
+                key, "evt-2", 20_000L, 2_000L, 5, 100, 300L);
+
+        List<Long> original = stateStore.recordAndGetPriorAmounts(
+                key, "evt-3", 30_000L, 3_000L, 5, 100, 300L);
+
+        List<Long> replay = stateStore.recordAndGetPriorAmounts(
+                key, "evt-3", 30_000L, 3_000L, 5, 100, 300L);
+
+        assertThat(original).containsExactly(10_000L, 20_000L);
+        assertThat(replay).containsExactlyElementsOf(original);
+    }
+
+    @Test
+    @DisplayName("Amount spike: rejects replay with a different amount")
+    void shouldRejectReplayWithDifferentAmount() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+
+        stateStore.recordAndGetPriorAmounts(
+                key, "evt-fixed", 50_000L, 1_000L, 5, 100, 300L);
+
+        assertThatThrownBy(() -> stateStore.recordAndGetPriorAmounts(
+                key, "evt-fixed", 75_000L, 1_000L, 5, 100, 300L))
+                .isInstanceOf(EventPayloadMismatchException.class)
+                .hasMessageContaining("different amount or timestamp");
+    }
+
+    @Test
+    @DisplayName("Amount spike: rejects replay with a different timestamp")
+    void shouldRejectReplayWithDifferentTimestamp() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+
+        stateStore.recordAndGetPriorAmounts(
+                key, "evt-timestamp", 50_000L, 1_000L, 5, 100, 300L);
+
+        assertThatThrownBy(() -> stateStore.recordAndGetPriorAmounts(
+                key, "evt-timestamp", 50_000L, 2_000L, 5, 100, 300L))
+                .isInstanceOf(EventPayloadMismatchException.class)
+                .hasMessageContaining("different amount or timestamp");
+    }
+
+    @Test
+    @DisplayName("Amount spike: excludes future transactions from an out-of-order baseline")
+    void shouldExcludeFutureTransactionsFromOutOfOrderBaseline() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+
+        stateStore.recordAndGetPriorAmounts(
+                key, "evt-later", 50_000L, 5_000L, 5, 100, 300L);
+
+        List<Long> lateBaseline = stateStore.recordAndGetPriorAmounts(
+                key, "evt-earlier", 20_000L, 2_000L, 5, 100, 300L);
+
+        List<Long> subsequentBaseline = stateStore.recordAndGetPriorAmounts(
+                key, "evt-subsequent", 60_000L, 6_000L, 5, 100, 300L);
+
+        assertThat(lateBaseline).isEmpty();
+        assertThat(subsequentBaseline).containsExactly(20_000L, 50_000L);
+    }
+
+    @Test
+    @DisplayName("Amount spike: history retains only maxHistory transactions")
+    void shouldTrimAmountHistoryToMaxHistory() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+
+        for (int i = 1; i <= 4; i++) {
+            stateStore.recordAndGetPriorAmounts(
+                    key,
+                    "evt-" + i,
+                    i * 10_000L,
+                    i * 1_000L,
+                    3,
+                    3,
+                    300L
+            );
+        }
+
+        List<Long> baseline = stateStore.recordAndGetPriorAmounts(
+                key, "evt-5", 50_000L, 5_000L, 3, 3, 300L);
+
+        assertThat(baseline).containsExactly(20_000L, 30_000L, 40_000L);
+    }
+
+    @Test
+    @DisplayName("Amount spike: evicted snapshot throws AmountSpikeSnapshotExpiredException")
+    void shouldRejectReplayAfterSnapshotEviction() {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+
+        stateStore.recordAndGetPriorAmounts(
+                key, "evt-1", 10_000L, 1_000L, 3, 3, 300L);
+
+        // Simulate snapshot eviction while retaining transaction history.
+        redisTemplate.opsForHash().delete(key + ":snapshots", "evt-1");
+        redisTemplate.opsForZSet().remove(key + ":snapshot-index", "evt-1");
+
+        assertThatThrownBy(() -> stateStore.recordAndGetPriorAmounts(
+                key, "evt-1", 10_000L, 1_000L, 3, 3, 300L))
+                .isInstanceOf(AmountSpikeSnapshotExpiredException.class)
+                .hasMessageContaining("snapshot has expired");
+    }
+
+    @Test
+    @DisplayName("Amount spike: 100 parallel evaluations preserve history and snapshot counts")
+    void shouldPreserveAmountHistoryAndSnapshotsUnderConcurrency() throws Exception {
+        String key = "fraudguard:amount-spike:{" + UUID.randomUUID() + "}";
+        int threadCount = 100;
+        int maxHistory = 100;
+        ExecutorService executor = Executors.newFixedThreadPool(16);
+
+        try {
+            List<Callable<List<Long>>> tasks = new ArrayList<>(threadCount);
+            long baseTime = 1_000_000L;
+
+            for (int i = 0; i < threadCount; i++) {
+                final int idx = i;
+                tasks.add(() -> stateStore.recordAndGetPriorAmounts(
+                        key,
+                        "evt-concurrent-" + idx,
+                        (idx + 1L) * 10_000L,
+                        baseTime + idx,
+                        5,
+                        maxHistory,
+                        600L
+                ));
+            }
+
+            List<Future<List<Long>>> futures = executor.invokeAll(tasks);
+
+            for (Future<List<Long>> future : futures) {
+                future.get(10, TimeUnit.SECONDS);
+            }
+
+            assertThat(redisTemplate.opsForZSet().zCard(key + ":history"))
+                    .isEqualTo(100L);
+            assertThat(redisTemplate.opsForHash().size(key + ":snapshots"))
+                    .isEqualTo(100L);
+            assertThat(redisTemplate.opsForZSet().zCard(key + ":snapshot-index"))
+                    .isEqualTo(100L);
+        } finally {
+            executor.shutdown();
+        }
     }
 }

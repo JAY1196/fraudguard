@@ -1,5 +1,6 @@
 package com.fraudguard.domain.store;
 
+import com.fraudguard.exception.AmountSpikeSnapshotExpiredException;
 import com.fraudguard.exception.EventPayloadMismatchException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +25,7 @@ public class RedisStateStore implements StateStore {
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<Long> slidingWindowScript;
     private final RedisScript<Long> recordAmountScript;
+    private final RedisScript<List> amountSpikeScript;
 
     public RedisStateStore(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
@@ -37,6 +39,12 @@ public class RedisStateStore implements StateStore {
         raScript.setScriptSource(new ResourceScriptSource(new ClassPathResource("scripts/record_amount.lua")));
         raScript.setResultType(Long.class);
         this.recordAmountScript = raScript;
+        DefaultRedisScript<List> asScript = new DefaultRedisScript<>();
+        asScript.setScriptSource(
+                new ResourceScriptSource(new ClassPathResource("scripts/amount_spike.lua"))
+        );
+        asScript.setResultType(List.class);
+        this.amountSpikeScript = asScript;
     }
 
     @Override
@@ -97,6 +105,75 @@ public class RedisStateStore implements StateStore {
         }
     }
 
+    @Override
+    public List<Long> recordAndGetPriorAmounts(
+            String key,
+            String eventId,
+            long amountPaise,
+            long scoreMs,
+            int historySize,
+            int maxHistory,
+            long ttlSeconds) {
+
+        List<String> keys = List.of(
+                key + ":history",
+                key + ":snapshots",
+                key + ":snapshot-index",
+                key + ":snapshot-sequence"
+        );
+
+        try {
+            List<?> result = redisTemplate.execute(
+                    amountSpikeScript,
+                    keys,
+                    eventId,
+                    String.valueOf(amountPaise),
+                    String.valueOf(scoreMs),
+                    String.valueOf(historySize),
+                    String.valueOf(maxHistory),
+                    String.valueOf(ttlSeconds)
+            );
+
+            if (result == null || result.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            List<Long> amounts = new ArrayList<>(result.size());
+
+            for (Object value : result) {
+                if (value instanceof Number number) {
+                    amounts.add(number.longValue());
+                } else {
+                    amounts.add(Long.parseLong(value.toString()));
+                }
+            }
+
+            return List.copyOf(amounts);
+
+        } catch (Exception e) {
+            Throwable root =
+                    org.springframework.core.NestedExceptionUtils.getMostSpecificCause(e);
+            String message = root != null && root.getMessage() != null
+                    ? root.getMessage()
+                    : e.getMessage();
+
+            if (message != null && message.contains("EVENT_PAYLOAD_MISMATCH")) {
+                throw new EventPayloadMismatchException(
+                        "Conflicting transaction payload: event_id '" + eventId
+                                + "' was already evaluated with a different amount or timestamp."
+                );
+            }
+
+            if (message != null && message.contains("AMOUNT_SPIKE_SNAPSHOT_EXPIRED")) {
+                throw new AmountSpikeSnapshotExpiredException(
+                        "Original amount spike evaluation snapshot has expired for event_id '"
+                                + eventId + "'."
+                );
+            }
+
+            throw e;
+        }
+    }
     @Override
     public boolean isHealthy() {
         try {

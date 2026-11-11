@@ -49,8 +49,17 @@ public record FraudGuardProperties(
     public record RulesProperties(
             @Valid HighAmountRuleProperties highAmount,
             @Valid UnusualHoursRuleProperties unusualHours,
-            @Valid VelocityRuleProperties velocity
+            @Valid VelocityRuleProperties velocity,
+            @Valid AmountSpikeRuleProperties amountSpike
     ) {
+        public RulesProperties(
+                HighAmountRuleProperties highAmount,
+                UnusualHoursRuleProperties unusualHours,
+                VelocityRuleProperties velocity
+        ) {
+            this(highAmount, unusualHours, velocity, null);
+        }
+
         public RulesProperties {
             if (highAmount == null) {
                 highAmount = new HighAmountRuleProperties(true, 5_000_000L, 50, "HIGH_AMOUNT");
@@ -64,9 +73,12 @@ public record FraudGuardProperties(
                 velocity = new VelocityRuleProperties(
                         true, 300, 5, 40, "VELOCITY_EXCEEDED", 600);
             }
+            if (amountSpike == null) {
+                amountSpike = new AmountSpikeRuleProperties(
+                        true, 3.0, 5, 3, 35, "AMOUNT_SPIKE", 100, 86400);
+            }
         }
     }
-
     public record HighAmountRuleProperties(
             boolean enabled,
             @Min(1) long thresholdPaise,
@@ -143,6 +155,44 @@ public record FraudGuardProperties(
         }
     }
 
+    public record AmountSpikeRuleProperties(
+            boolean enabled,
+            double multiplier,
+            @Min(1) int historySize,
+            @Min(1) int minimumHistory,
+            @Min(1) @Max(100) int weight,
+            @NotBlank String reasonCode,
+            @Min(1) int maxHistory,
+            @Min(1) long ttlSeconds
+    ) {
+        public AmountSpikeRuleProperties {
+            if (!Double.isFinite(multiplier) || multiplier <= 1.0) {
+                throw new IllegalArgumentException(
+                        "Amount spike multiplier must be finite and > 1");
+            }
+            if (historySize < 1) {
+                throw new IllegalArgumentException("Amount spike historySize must be >= 1");
+            }
+            if (minimumHistory < 1 || minimumHistory > historySize) {
+                throw new IllegalArgumentException(
+                        "Amount spike minimumHistory must be between 1 and historySize");
+            }
+            if (weight < 1 || weight > 100) {
+                throw new IllegalArgumentException(
+                        "Amount spike weight must be between 1 and 100");
+            }
+            if (reasonCode == null || reasonCode.isBlank()) {
+                throw new IllegalArgumentException("Amount spike reasonCode must not be blank");
+            }
+            if (maxHistory < historySize) {
+                throw new IllegalArgumentException(
+                        "Amount spike maxHistory must be >= historySize");
+            }
+            if (ttlSeconds < 1) {
+                throw new IllegalArgumentException("Amount spike ttlSeconds must be >= 1");
+            }
+        }
+    }
     public record ValidationProperties(
             @Min(0) long maxFutureSkewSeconds,
             Long maxPastAgeSeconds

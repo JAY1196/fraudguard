@@ -49,3 +49,12 @@ fraudguard:
       weight: 40
       reason-code: VELOCITY_EXCEEDED
       ttl-seconds: 600
+    amount-spike:
+      enabled: true
+      multiplier: 3.0
+      history-size: 5
+      minimum-history: 3
+      weight: 35
+      reason-code: AMOUNT_SPIKE
+      max-history: 100
+      ttl-seconds: 86400

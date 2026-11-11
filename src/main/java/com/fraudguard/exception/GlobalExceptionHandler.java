@@ -49,6 +49,19 @@ public class GlobalExceptionHandler {
         return problemDetail;
     }
 
+    @ExceptionHandler(AmountSpikeSnapshotExpiredException.class)
+    public ProblemDetail handleAmountSpikeSnapshotExpiredException(
+            AmountSpikeSnapshotExpiredException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                ex.getMessage()
+        );
+        problemDetail.setTitle("Amount Spike Snapshot Expired");
+        problemDetail.setType(URI.create("urn:problem:amount-spike-snapshot-expired"));
+        problemDetail.setProperty("code", "AMOUNT_SPIKE_SNAPSHOT_EXPIRED");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
     @ExceptionHandler(EventPayloadMismatchException.class)
     public ProblemDetail handleEventPayloadMismatchException(EventPayloadMismatchException ex) {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
