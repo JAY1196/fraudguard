@@ -4,11 +4,28 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FraudGuardPropertiesTest {
+
+    private final ApplicationContextRunner amountSpikeContextRunner =
+            new ApplicationContextRunner()
+                    .withUserConfiguration(AmountSpikePropertiesConfiguration.class)
+                    .withPropertyValues(
+                            "fraudguard.rules.amount-spike.enabled=true",
+                            "fraudguard.rules.amount-spike.multiplier=3.0",
+                            "fraudguard.rules.amount-spike.history-size=5",
+                            "fraudguard.rules.amount-spike.minimum-history=3",
+                            "fraudguard.rules.amount-spike.weight=35",
+                            "fraudguard.rules.amount-spike.reason-code=AMOUNT_SPIKE",
+                            "fraudguard.rules.amount-spike.max-history=100",
+                            "fraudguard.rules.amount-spike.ttl-seconds=86400"
+                    );
 
     @Test
     @DisplayName("Default properties must use 40 review, 70 block, Asia/Kolkata timezone, and 300s future skew")
@@ -184,5 +201,57 @@ class FraudGuardPropertiesTest {
                 true, 300, 5, 40, "VELOCITY_EXCEEDED", 300);
 
         assertThat(properties.ttlSeconds()).isEqualTo(properties.windowSeconds());
+    }
+
+    @Test
+    @DisplayName("Application startup must succeed with valid amount spike properties")
+    void shouldStartWhenAmountSpikePropertiesAreValid() {
+        amountSpikeContextRunner
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    @DisplayName("Application startup must fail when amount spike multiplier is not greater than 1")
+    void shouldFailStartupWhenAmountSpikeMultiplierIsInvalid() {
+        amountSpikeContextRunner
+                .withPropertyValues("fraudguard.rules.amount-spike.multiplier=1.0")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("Application startup must fail when minimum history exceeds history size")
+    void shouldFailStartupWhenAmountSpikeMinimumHistoryExceedsHistorySize() {
+        amountSpikeContextRunner
+                .withPropertyValues("fraudguard.rules.amount-spike.minimum-history=6")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("Application startup must fail when maximum history is below history size")
+    void shouldFailStartupWhenAmountSpikeMaximumHistoryIsTooSmall() {
+        amountSpikeContextRunner
+                .withPropertyValues("fraudguard.rules.amount-spike.max-history=4")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("Application startup must fail when amount spike weight is outside 1 to 100")
+    void shouldFailStartupWhenAmountSpikeWeightIsInvalid() {
+        amountSpikeContextRunner
+                .withPropertyValues("fraudguard.rules.amount-spike.weight=101")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("Application startup must fail when amount spike reason code is blank")
+    void shouldFailStartupWhenAmountSpikeReasonCodeIsBlank() {
+        amountSpikeContextRunner
+                .withPropertyValues("fraudguard.rules.amount-spike.reason-code= ")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(FraudGuardProperties.class)
+    static class AmountSpikePropertiesConfiguration {
     }
 }

@@ -1,6 +1,7 @@
 package com.fraudguard.config;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -159,7 +160,7 @@ public record FraudGuardProperties(
 
     public record AmountSpikeRuleProperties(
             boolean enabled,
-            double multiplier,
+            @DecimalMin(value = "1.0", inclusive = false) double multiplier,
             @Min(1) int historySize,
             @Min(1) int minimumHistory,
             @Min(1) @Max(100) int weight,
