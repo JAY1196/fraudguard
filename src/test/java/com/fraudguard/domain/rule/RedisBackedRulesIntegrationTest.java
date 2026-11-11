@@ -1,5 +1,7 @@
 package com.fraudguard.domain.rule;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fraudguard.config.FraudGuardProperties;
 import com.fraudguard.domain.engine.RuleEngine;
 import com.fraudguard.domain.model.EvaluationResult;
@@ -114,6 +116,64 @@ class RedisBackedRulesIntegrationTest {
     }
 
     @Test
+    @DisplayName("Velocity does not trigger one transaction below the configured maximum")
+    void shouldNotTriggerVelocityAtNMinusOneWithRealRedis() {
+        RuleEngine engine = createEngine(true, false);
+        Instant baseTime = Instant.parse("2026-11-09T10:00:00Z");
+
+        EvaluationResult lastResult = null;
+
+        for (int i = 1; i <= 4; i++) {
+            lastResult = engine.evaluate(
+                    transaction(
+                            UUID.randomUUID(),
+                            10_000L,
+                            baseTime.plusSeconds(i),
+                            TransactionType.TRANSFER
+                    )
+            );
+        }
+
+        String redisKey = "fraudguard:velocity:" + SOURCE_WALLET;
+
+        assertThat(lastResult).isNotNull();
+        assertThat(lastResult.score()).isZero();
+        assertThat(lastResult.reasonCodes()).doesNotContain("VELOCITY_EXCEEDED");
+        assertThat(lastResult.decision()).isEqualTo(RiskDecision.ALLOW);
+        assertThat(lastResult.degraded()).isFalse();
+        assertThat(redisTemplate.opsForZSet().zCard(redisKey)).isEqualTo(4L);
+    }
+
+    @Test
+    @DisplayName("Velocity does not double-count a duplicate event through the actual rule")
+    void shouldNotDoubleCountDuplicateEventThroughActualRule() {
+        RuleEngine engine = createEngine(true, false);
+        Transaction duplicate = transaction(
+                UUID.randomUUID(),
+                10_000L,
+                Instant.parse("2026-11-09T10:00:01Z"),
+                TransactionType.TRANSFER
+        );
+
+        EvaluationResult result = null;
+
+        for (int i = 0; i < 5; i++) {
+            result = engine.evaluate(duplicate);
+
+            assertThat(result.score()).isZero();
+            assertThat(result.reasonCodes()).doesNotContain("VELOCITY_EXCEEDED");
+            assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
+        }
+
+        String redisKey = "fraudguard:velocity:" + SOURCE_WALLET;
+
+        assertThat(redisTemplate.opsForZSet().zCard(redisKey)).isEqualTo(1L);
+        assertThat(redisTemplate.opsForZSet()
+                .score(redisKey, duplicate.eventId().toString()))
+                .isEqualTo((double) duplicate.timestamp().toEpochMilli());
+    }
+
+    @Test
     @DisplayName("Amount Spike does not trigger with exactly two prior transactions")
     void shouldNotTriggerAmountSpikeWithTwoPriorTransactions() {
         RuleEngine engine = createEngine(false, true);
@@ -155,6 +215,66 @@ class RedisBackedRulesIntegrationTest {
         assertThat(result.score()).isEqualTo(35);
         assertThat(result.reasonCodes()).contains("AMOUNT_SPIKE");
         assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
+    }
+
+    @Test
+    @DisplayName("Amount Spike does not trigger at exactly three times the average")
+    void shouldNotTriggerAmountSpikeAtExactThresholdWithRealRedis() {
+        RuleEngine engine = createEngine(false, true);
+        Instant baseTime = Instant.parse("2026-11-09T10:00:00Z");
+
+        seedAmountHistory(engine, baseTime, 3);
+
+        EvaluationResult result = engine.evaluate(
+                transaction(
+                        UUID.randomUUID(),
+                        30_000L,
+                        baseTime.plusSeconds(4),
+                        TransactionType.TRANSFER
+                )
+        );
+
+        assertThat(result.score()).isZero();
+        assertThat(result.reasonCodes()).doesNotContain("AMOUNT_SPIKE");
+        assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
+        assertThat(result.degraded()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Amount Spike excludes the current event from its own baseline")
+    void shouldExcludeCurrentEventFromBaselineThroughActualRule() throws Exception {
+        RuleEngine engine = createEngine(false, true);
+        Instant baseTime = Instant.parse("2026-11-09T10:00:00Z");
+
+        seedAmountHistory(engine, baseTime, 3);
+
+        Transaction current = transaction(
+                UUID.randomUUID(),
+                30_001L,
+                baseTime.plusSeconds(4),
+                TransactionType.TRANSFER
+        );
+
+        EvaluationResult result = engine.evaluate(current);
+
+        String redisKey = "fraudguard:amount-spike:{"
+                + SOURCE_WALLET + "}";
+
+        String snapshot = (String) redisTemplate.opsForHash()
+                .get(redisKey + ":snapshots", current.eventId().toString());
+
+        assertThat(snapshot).isNotNull();
+
+        JsonNode snapshotJson = new ObjectMapper().readTree(snapshot);
+
+        assertThat(result.reasonCodes()).contains("AMOUNT_SPIKE");
+        assertThat(snapshotJson.get("baseline"))
+                .isEqualTo(new ObjectMapper().readTree("[\"10000\",\"10000\",\"10000\"]"));
+
+        assertThat(redisTemplate.opsForZSet()
+                .score(redisKey + ":history",
+                        current.eventId() + ":" + current.amountPaise()))
+                .isEqualTo((double) current.timestamp().toEpochMilli());
     }
 
     @Test
@@ -217,6 +337,170 @@ class RedisBackedRulesIntegrationTest {
 
         assertThat(redisTemplate.opsForZSet().zCard(redisKey))
                 .isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("A late Velocity event excludes newer transactions from its count")
+    void shouldExcludeNewerTransactionsWhenEvaluatingLateEvent() {
+        RuleEngine engine = createEngine(true, false);
+
+        String redisKey = "fraudguard:velocity:" + SOURCE_WALLET;
+
+        List<UUID> newerEventIds = List.of(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID()
+        );
+
+        for (int i = 0; i < newerEventIds.size(); i++) {
+            engine.evaluate(
+                    transaction(
+                            newerEventIds.get(i),
+                            10_000L,
+                            Instant.ofEpochMilli(100_000L + (i * 1_000L)),
+                            TransactionType.TRANSFER
+                    )
+            );
+        }
+
+        Transaction lateTransaction = transaction(
+                UUID.randomUUID(),
+                10_000L,
+                Instant.ofEpochMilli(60_000L),
+                TransactionType.TRANSFER
+        );
+
+        EvaluationResult lateResult = engine.evaluate(lateTransaction);
+
+        assertThat(lateResult.score()).isZero();
+        assertThat(lateResult.reasonCodes()).doesNotContain("VELOCITY_EXCEEDED");
+        assertThat(lateResult.decision()).isEqualTo(RiskDecision.ALLOW);
+        assertThat(lateResult.degraded()).isFalse();
+
+        for (int i = 0; i < newerEventIds.size(); i++) {
+            assertThat(redisTemplate.opsForZSet()
+                    .score(redisKey, newerEventIds.get(i).toString()))
+                    .isEqualTo(100_000.0 + (i * 1_000L));
+        }
+
+        assertThat(redisTemplate.opsForZSet().zCard(redisKey)).isEqualTo(6L);
+    }
+
+    @Test
+    @DisplayName("A late Amount Spike event uses only earlier transactions in its baseline")
+    void shouldExcludeNewerTransactionsFromLateAmountSpikeBaseline() throws Exception {
+        RuleEngine engine = createEngine(false, true);
+        Instant baseTime = Instant.parse("2026-11-09T10:00:00Z");
+
+        seedAmountHistory(engine, baseTime, 3);
+
+        Transaction newerFirst = transaction(
+                UUID.randomUUID(),
+                50_000L,
+                baseTime.plusSeconds(5),
+                TransactionType.TRANSFER
+        );
+
+        Transaction newerSecond = transaction(
+                UUID.randomUUID(),
+                50_000L,
+                baseTime.plusSeconds(6),
+                TransactionType.TRANSFER
+        );
+
+        engine.evaluate(newerFirst);
+        engine.evaluate(newerSecond);
+
+        Transaction lateTransaction = transaction(
+                UUID.randomUUID(),
+                30_001L,
+                baseTime.plusSeconds(4),
+                TransactionType.TRANSFER
+        );
+
+        EvaluationResult result = engine.evaluate(lateTransaction);
+
+        String redisKey = "fraudguard:amount-spike:{"
+                + SOURCE_WALLET + "}";
+
+        String snapshot = (String) redisTemplate.opsForHash()
+                .get(redisKey + ":snapshots", lateTransaction.eventId().toString());
+
+        assertThat(snapshot).isNotNull();
+
+        JsonNode snapshotJson = new ObjectMapper().readTree(snapshot);
+
+        assertThat(result.score()).isEqualTo(35);
+        assertThat(result.reasonCodes()).contains("AMOUNT_SPIKE");
+        assertThat(snapshotJson.get("baseline"))
+                .isEqualTo(new ObjectMapper().readTree(
+                        "[\"10000\",\"10000\",\"10000\"]"
+                ));
+
+        assertThat(redisTemplate.opsForZSet()
+                .score(redisKey + ":history",
+                        newerFirst.eventId() + ":" + newerFirst.amountPaise()))
+                .isEqualTo((double) newerFirst.timestamp().toEpochMilli());
+
+        assertThat(redisTemplate.opsForZSet()
+                .score(redisKey + ":history",
+                        newerSecond.eventId() + ":" + newerSecond.amountPaise()))
+                .isEqualTo((double) newerSecond.timestamp().toEpochMilli());
+    }
+
+    @Test
+    @DisplayName("Amount Spike orders equal-timestamp transactions deterministically")
+    void shouldOrderEqualTimestampAmountEventsDeterministically() throws Exception {
+        RuleEngine engine = createEngine(false, true);
+        Instant baseTime = Instant.parse("2026-11-09T10:00:00Z");
+
+        seedAmountHistory(engine, baseTime, 3);
+
+        Instant equalTimestamp = baseTime.plusSeconds(4);
+
+        Transaction firstEqualEvent = transaction(
+                UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                20_000L,
+                equalTimestamp,
+                TransactionType.TRANSFER
+        );
+
+        Transaction secondEqualEvent = transaction(
+                UUID.fromString("00000000-0000-0000-0000-000000000002"),
+                30_000L,
+                equalTimestamp,
+                TransactionType.TRANSFER
+        );
+
+        engine.evaluate(firstEqualEvent);
+        engine.evaluate(secondEqualEvent);
+
+        Transaction current = transaction(
+                UUID.randomUUID(),
+                100_000L,
+                baseTime.plusSeconds(5),
+                TransactionType.TRANSFER
+        );
+
+        EvaluationResult result = engine.evaluate(current);
+
+        String redisKey = "fraudguard:amount-spike:{"
+                + SOURCE_WALLET + "}";
+
+        String snapshot = (String) redisTemplate.opsForHash()
+                .get(redisKey + ":snapshots", current.eventId().toString());
+
+        assertThat(snapshot).isNotNull();
+
+        JsonNode snapshotJson = new ObjectMapper().readTree(snapshot);
+
+        assertThat(result.reasonCodes()).contains("AMOUNT_SPIKE");
+        assertThat(snapshotJson.get("baseline"))
+                .isEqualTo(new ObjectMapper().readTree(
+                        "[\"10000\",\"10000\",\"10000\",\"20000\",\"30000\"]"
+                ));
     }
 
     private RuleEngine createEngine(boolean velocityEnabled, boolean amountSpikeEnabled) {
