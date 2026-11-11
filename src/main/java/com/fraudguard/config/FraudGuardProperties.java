@@ -22,7 +22,7 @@ public record FraudGuardProperties(
             thresholds = new ThresholdProperties(40, 70);
         }
         if (rules == null) {
-            rules = new RulesProperties(null, null);
+            rules = new RulesProperties(null, null, null);
         }
         if (validation == null) {
             validation = new ValidationProperties(300L, null);
@@ -48,7 +48,8 @@ public record FraudGuardProperties(
 
     public record RulesProperties(
             @Valid HighAmountRuleProperties highAmount,
-            @Valid UnusualHoursRuleProperties unusualHours
+            @Valid UnusualHoursRuleProperties unusualHours,
+            @Valid VelocityRuleProperties velocity
     ) {
         public RulesProperties {
             if (highAmount == null) {
@@ -56,8 +57,12 @@ public record FraudGuardProperties(
             }
             if (unusualHours == null) {
                 unusualHours = new UnusualHoursRuleProperties(
-                        true, 23, 5, 2_000_000L, 40, "UNUSUAL_HOURS_HIGH_AMOUNT", "Asia/Kolkata"
-                );
+                        true, 23, 5, 2_000_000L, 40,
+                        "UNUSUAL_HOURS_HIGH_AMOUNT", "Asia/Kolkata");
+            }
+            if (velocity == null) {
+                velocity = new VelocityRuleProperties(
+                        true, 300, 5, 40, "VELOCITY_EXCEEDED", 600);
             }
         }
     }
@@ -107,6 +112,33 @@ public record FraudGuardProperties(
                 ZoneId.of(timeZone);
             } catch (Exception e) {
                 throw new IllegalArgumentException("Invalid timeZone: '" + timeZone + "'", e);
+            }
+        }
+    }
+
+    public record VelocityRuleProperties(
+            boolean enabled,
+            @Min(1) @Max(86400) int windowSeconds,
+            @Min(1) int maxTransactionsInWindow,
+            @Min(1) @Max(100) int weight,
+            @NotBlank String reasonCode,
+            @Min(1) long ttlSeconds
+    ) {
+        public VelocityRuleProperties {
+            if (windowSeconds < 1 || windowSeconds > 86400) {
+                throw new IllegalArgumentException("Velocity windowSeconds must be between 1 and 86400 (got " + windowSeconds + ")");
+            }
+            if (maxTransactionsInWindow < 1) {
+                throw new IllegalArgumentException("Velocity maxTransactionsInWindow must be >= 1 (got " + maxTransactionsInWindow + ")");
+            }
+            if (weight < 1 || weight > 100) {
+                throw new IllegalArgumentException("Velocity weight must be between 1 and 100 (got " + weight + ")");
+            }
+            if (reasonCode == null || reasonCode.isBlank()) {
+                throw new IllegalArgumentException("Velocity reasonCode must not be blank");
+            }
+            if (ttlSeconds < windowSeconds) {
+                throw new IllegalArgumentException("Velocity ttlSeconds must be >= windowSeconds (got ttlSeconds=" + ttlSeconds + ", windowSeconds=" + windowSeconds + ")");
             }
         }
     }

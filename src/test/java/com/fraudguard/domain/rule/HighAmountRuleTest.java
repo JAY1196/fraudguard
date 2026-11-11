@@ -31,6 +31,7 @@ class HighAmountRuleTest {
                 new FraudGuardProperties.ThresholdProperties(40, 70),
                 new FraudGuardProperties.RulesProperties(
                         new FraudGuardProperties.HighAmountRuleProperties(true, THRESHOLD, WEIGHT, REASON_CODE),
+                        null,
                         null
                 ),
                 null
@@ -87,6 +88,7 @@ class HighAmountRuleTest {
                 new FraudGuardProperties.ThresholdProperties(40, 70),
                 new FraudGuardProperties.RulesProperties(
                         new FraudGuardProperties.HighAmountRuleProperties(false, THRESHOLD, WEIGHT, REASON_CODE),
+                        null,
                         null
                 ),
                 null

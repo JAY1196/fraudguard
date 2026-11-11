@@ -107,4 +107,82 @@ class FraudGuardPropertiesTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("maxPastAgeSeconds must be >= 0");
     }
+
+    @Test
+    @DisplayName("Velocity defaults must use 300-second window, max 5 transactions, weight 40 and TTL 600")
+    void shouldHaveSensibleVelocityDefaults() {
+        FraudGuardProperties properties = new FraudGuardProperties(null, null, null);
+        var velocity = properties.rules().velocity();
+
+        assertThat(velocity.enabled()).isTrue();
+        assertThat(velocity.windowSeconds()).isEqualTo(300);
+        assertThat(velocity.maxTransactionsInWindow()).isEqualTo(5);
+        assertThat(velocity.weight()).isEqualTo(40);
+        assertThat(velocity.reasonCode()).isEqualTo("VELOCITY_EXCEEDED");
+        assertThat(velocity.ttlSeconds()).isEqualTo(600);
+    }
+
+    @Test
+    @DisplayName("Velocity window must be between 1 and 86400 seconds")
+    void shouldRejectInvalidVelocityWindow() {
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 0, 5, 40, "VELOCITY_EXCEEDED", 600))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("between 1 and 86400");
+
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 86401, 5, 40, "VELOCITY_EXCEEDED", 86401))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("between 1 and 86400");
+    }
+
+    @Test
+    @DisplayName("Velocity maximum transactions must be at least 1")
+    void shouldRejectInvalidVelocityMaximumTransactions() {
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 300, 0, 40, "VELOCITY_EXCEEDED", 600))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxTransactionsInWindow must be >= 1");
+    }
+
+    @Test
+    @DisplayName("Velocity weight must be between 1 and 100")
+    void shouldRejectInvalidVelocityWeight() {
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 300, 5, 0, "VELOCITY_EXCEEDED", 600))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("weight must be between 1 and 100");
+
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 300, 5, 101, "VELOCITY_EXCEEDED", 600))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("weight must be between 1 and 100");
+    }
+
+    @Test
+    @DisplayName("Velocity reason code must not be blank")
+    void shouldRejectBlankVelocityReasonCode() {
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 300, 5, 40, " ", 600))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reasonCode must not be blank");
+    }
+
+    @Test
+    @DisplayName("Velocity TTL must be greater than or equal to window duration")
+    void shouldRejectVelocityTtlShorterThanWindow() {
+        assertThatThrownBy(() -> new FraudGuardProperties.VelocityRuleProperties(
+                true, 300, 5, 40, "VELOCITY_EXCEEDED", 299))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ttlSeconds must be >= windowSeconds");
+    }
+
+    @Test
+    @DisplayName("Velocity TTL equal to window duration is valid")
+    void shouldAcceptVelocityTtlEqualToWindow() {
+        var properties = new FraudGuardProperties.VelocityRuleProperties(
+                true, 300, 5, 40, "VELOCITY_EXCEEDED", 300);
+
+        assertThat(properties.ttlSeconds()).isEqualTo(properties.windowSeconds());
+    }
 }

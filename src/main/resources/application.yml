@@ -42,3 +42,10 @@ fraudguard:
       weight: 40
       reason-code: UNUSUAL_HOURS_HIGH_AMOUNT
       time-zone: Asia/Kolkata
+    velocity:
+      enabled: true
+      window-seconds: 300
+      max-transactions-in-window: 5
+      weight: 40
+      reason-code: VELOCITY_EXCEEDED
+      ttl-seconds: 600
