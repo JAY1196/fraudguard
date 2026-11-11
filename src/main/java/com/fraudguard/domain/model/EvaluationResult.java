@@ -5,5 +5,10 @@ import java.util.List;
 public record EvaluationResult(
         RiskDecision decision,
         int score,
-        List<String> reasonCodes
-) {}
+        List<String> reasonCodes,
+        boolean degraded
+) {
+    public EvaluationResult(RiskDecision decision, int score, List<String> reasonCodes) {
+        this(decision, score, reasonCodes, false);
+    }
+}

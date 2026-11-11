@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Component
-public class AmountSpikeRule implements FraudRule {
+public class AmountSpikeRule implements RedisBackedFraudRule {
 
     public static final String RULE_NAME = "AMOUNT_SPIKE";
 

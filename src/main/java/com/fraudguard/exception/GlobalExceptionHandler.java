@@ -65,7 +65,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(EventPayloadMismatchException.class)
     public ProblemDetail handleEventPayloadMismatchException(EventPayloadMismatchException ex) {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST,
+                HttpStatus.UNPROCESSABLE_ENTITY,
                 ex.getMessage()
         );
         problemDetail.setTitle("Event Payload Mismatch");

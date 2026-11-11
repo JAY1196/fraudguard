@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.UUID;
 
 @Component
-public class VelocityRule implements FraudRule {
+public class VelocityRule implements RedisBackedFraudRule {
 
     public static final String RULE_NAME = "VELOCITY";
 
