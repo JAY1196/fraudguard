@@ -5,6 +5,7 @@ import com.fraudguard.exception.EventPayloadMismatchException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -93,7 +94,7 @@ public class RedisStateStore implements StateStore {
                     String.valueOf(maxHistory),
                     String.valueOf(ttlSeconds)
             );
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             Throwable root = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(e);
             String msg = root != null && root.getMessage() != null ? root.getMessage() : e.getMessage();
             if (msg != null && msg.contains("EVENT_PAYLOAD_MISMATCH")) {
@@ -150,7 +151,7 @@ public class RedisStateStore implements StateStore {
 
             return List.copyOf(amounts);
 
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             Throwable root =
                     org.springframework.core.NestedExceptionUtils.getMostSpecificCause(e);
             String message = root != null && root.getMessage() != null
@@ -185,7 +186,7 @@ public class RedisStateStore implements StateStore {
                 String pong = connection.ping();
                 return "PONG".equalsIgnoreCase(pong);
             }
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             log.warn("Redis health check failed: {}", e.getMessage());
             return false;
         }

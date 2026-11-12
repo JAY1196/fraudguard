@@ -236,6 +236,30 @@ class RuleEngineTest {
     }
 
     @Test
+    @DisplayName("Should return degraded result when a Redis-backed rule times out")
+    void shouldReturnDegradedWhenRedisBackedRuleTimesOut() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "RedisRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new org.springframework.dao.QueryTimeoutException(
+                        "Redis command timed out");
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule), properties, fixedClock);
+
+        EvaluationResult result = engine.evaluate(sampleTransaction);
+
+        assertThat(result.degraded()).isTrue();
+        assertThat(result.reasonCodes()).containsExactly("DEGRADED");
+        assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
+    }
+    @Test
     @DisplayName("Should propagate payload mismatch instead of returning degraded success")
     void shouldPropagatePayloadMismatchFromRedisBackedRule() {
         RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
