@@ -9,6 +9,7 @@ import com.fraudguard.domain.model.TransactionType;
 import com.fraudguard.domain.rule.FraudRule;
 import com.fraudguard.domain.rule.RedisBackedFraudRule;
 import com.fraudguard.exception.EventPayloadMismatchException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -279,4 +280,29 @@ class RuleEngineTest {
         assertThatThrownBy(() -> engine.evaluate(sampleTransaction))
                 .isInstanceOf(EventPayloadMismatchException.class)
                 .hasMessage("Event payload does not match");
-    }}
+    }
+
+    @Test
+    @DisplayName("Should propagate unrelated Redis data access errors instead of returning degraded success")
+    void shouldPropagateUnrelatedRedisDataAccessException() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "RedisRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new DataAccessResourceFailureException(
+                        "Unexpected Redis data access failure"
+                );
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule), properties, fixedClock);
+
+        assertThatThrownBy(() -> engine.evaluate(sampleTransaction))
+                .isInstanceOf(DataAccessResourceFailureException.class)
+                .hasMessage("Unexpected Redis data access failure");
+    }
+}

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -23,6 +24,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.time.Instant;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -30,15 +32,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @Testcontainers
-@SpringBootTest(properties = {"fraudguard.rules.high-amount.weight=80", "fraudguard.rules.unusual-hours.enabled=false"})
+@SpringBootTest(properties = {
+        "fraudguard.rules.high-amount.weight=80",
+        "fraudguard.rules.unusual-hours.enabled=false"
+})
 @AutoConfigureMockMvc
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class RiskEvaluationRedisDegradedModeIntegrationTest {
 
     private static final UUID SOURCE_WALLET =
             UUID.fromString("11111111-1111-1111-1111-111111111111");
+
     private static final UUID DESTINATION_WALLET =
             UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+    private static final String VELOCITY_REDIS_KEY =
+            "fraudguard:velocity:" + SOURCE_WALLET;
 
     @Container
     static final GenericContainer<?> redis =
@@ -51,20 +60,31 @@ class RiskEvaluationRedisDegradedModeIntegrationTest {
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
         registry.add("spring.data.redis.timeout", () -> "500ms");
     }
+
     @Autowired
     private MockMvc mockMvc;
 
-    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
+    private final ObjectMapper objectMapper =
+            new ObjectMapper().findAndRegisterModules();
 
     @Test
     @Order(1)
     @DisplayName("Healthy Redis returns 422 when an event ID is replayed with a changed amount")
     void shouldReturnPayloadMismatchWhenRedisIsHealthy() throws Exception {
+
+        assertThat(redis.isRunning()).isTrue();
+
         UUID eventId = UUID.randomUUID();
         Instant timestamp = Instant.now();
 
-        EvaluateRiskRequest originalRequest = createRequest(eventId, 100_000L, timestamp);
-        EvaluateRiskRequest conflictingRequest = createRequest(eventId, 200_000L, timestamp);
+        EvaluateRiskRequest originalRequest =
+                createRequest(eventId, 100_000L, timestamp);
+
+        EvaluateRiskRequest conflictingRequest =
+                createRequest(eventId, 200_000L, timestamp);
 
         mockMvc.perform(post("/api/v1/risk/evaluate")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -82,11 +102,40 @@ class RiskEvaluationRedisDegradedModeIntegrationTest {
 
     @Test
     @Order(2)
+    @DisplayName("Unrelated Redis WRONGTYPE errors return HTTP 500 instead of degraded success")
+    void shouldReturnInternalServerErrorForUnrelatedRedisError() throws Exception {
+
+        assertThat(redis.isRunning()).isTrue();
+
+        // Redis velocity logic expects a sorted set.
+        // Store a string under the same key to deliberately trigger WRONGTYPE.
+        redisTemplate.opsForValue().set(
+                VELOCITY_REDIS_KEY,
+                "deliberately-wrong-redis-data-type"
+        );
+
+        EvaluateRiskRequest request = createRequest(
+                UUID.randomUUID(),
+                100_000L,
+                Instant.now()
+        );
+
+        mockMvc.perform(post("/api/v1/risk/evaluate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.status", is(500)))
+                .andExpect(jsonPath("$.code", is("INTERNAL_SERVER_ERROR")));
+    }
+
+    @Test
+    @Order(3)
     @DisplayName("Stopped dedicated Redis enables degraded mode while the stateless high-amount rule blocks")
     void shouldBlockHighAmountTransactionWhenRedisIsUnavailable() throws Exception {
+
         redis.stop();
 
-        org.assertj.core.api.Assertions.assertThat(redis.isRunning()).isFalse();
+        assertThat(redis.isRunning()).isFalse();
 
         EvaluateRiskRequest request = createRequest(
                 UUID.randomUUID(),
@@ -105,7 +154,11 @@ class RiskEvaluationRedisDegradedModeIntegrationTest {
                 .andExpect(jsonPath("$.reason_codes", hasItem("HIGH_AMOUNT")));
     }
 
-    private EvaluateRiskRequest createRequest(UUID eventId, long amountPaise, Instant timestamp) {
+    private EvaluateRiskRequest createRequest(
+            UUID eventId,
+            long amountPaise,
+            Instant timestamp
+    ) {
         return new EvaluateRiskRequest(
                 eventId,
                 SOURCE_WALLET,

@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -186,7 +188,7 @@ public class RedisStateStore implements StateStore {
                 String pong = connection.ping();
                 return "PONG".equalsIgnoreCase(pong);
             }
-        } catch (DataAccessException e) {
+        } catch (RedisConnectionFailureException | QueryTimeoutException e) {
             log.warn("Redis health check failed: {}", e.getMessage());
             return false;
         }

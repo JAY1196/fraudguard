@@ -167,7 +167,9 @@ The Redis configuration was checked directly:
 |---:|---:|---:|---:|---|
 | 5 | 5 | 360 bytes | 72.00 | listpack |
 | 50 | 50 | 2,664 bytes | 53.28 | listpack |
-| 500 | 500 | 59,592 bytes | 119.18 | skiplist |
+| 500 | 500 | 59,872–60,000 bytes | 119.74–120.00 | skiplist |
+
+The 500-entry measurement varied across repeated runs. Three repeated measurements returned 59,872, 59,992 and 60,000 bytes; an initial reproduction returned 59,968 bytes. The range above records the observed local measurements.
 
 The 500-entry set exceeds the configured 128-entry listpack threshold and was observed using skiplist encoding.
 
