@@ -135,12 +135,25 @@ Stateful fraud detection rules (such as transaction velocity in a sliding window
    - `sliding_window.lua` executes `ZREMRANGEBYSCORE`, `ZADD`, `ZCOUNT`, and `EXPIRE` atomically within Redis server single-threaded execution context in one round-trip.
    - `record_amount.lua` executes `ZADD`, `ZREMRANGEBYRANK`, and `EXPIRE` atomically to maintain a bounded chronological history of recent amounts.
 3. **Out-of-Order Semantics & Interval Counting**:
-   - Window count is computed strictly across `[event_ts - window, event_ts]` via `ZCOUNT key (event_ts - window) event_ts`.
+   - Window count is computed strictly across `[event_ts - window, event_ts]` via `ZCOUNT key (event_ts - window) event_ts` where the displayed parentheses denote arithmetic grouping, not an exclusive Redis score bound. The Lua script passes `min_score` and `event_ts` as inclusive bounds.
    - An out-of-order late event counts strictly the events that occurred up to its own timestamp; it does not count events with timestamps in its future.
    - Older events **never delete newer state**: `ZREMRANGEBYSCORE key -inf (event_ts - window)` only prunes items strictly before the window; any items with `timestamp >= event_ts` remain untouched.
    - Cleanup of dormant keys relies on atomic `EXPIRE key ttl_sec` refreshed on every evaluation.
 4. **Idempotency & Deduplication**: Event IDs serve as sorted set members; re-evaluating the same event ID updates the member score in-place without incrementing cardinality.
 5. **Memory Safety**: Every state mutation sets an idle TTL on the key, ensuring dormant wallet keys are automatically collected by Redis.
+
+### Algorithm Trade-offs and Measurement
+
+The selected sliding-window log retains individual event timestamps in a Redis sorted set. Its per-event command complexity is O(log N + M), where N is the sorted-set cardinality and M is the number of expired entries removed during pruning. Its state is O(N) per wallet.
+
+Fixed-window counters, sliding-window counters, and token buckets use constant-size state and O(1) operations for their typical Redis command patterns, but have different accuracy and burst semantics. The fixed-window boundary-burst limitation and the trade-offs are documented in [docs/ALGORITHMS.md](docs/ALGORITHMS.md).
+
+A local Redis 7.4.12 measurement using the application's key format, UUID members, and 600-second TTL reported:
+- 5 entries: 360 bytes (listpack).
+- 50 entries: 2,664 bytes (listpack).
+- 500 entries: 59,592 bytes (skiplist).
+
+These are measurements of individual Redis keys using `MEMORY USAGE ... SAMPLES 0`; they are not production-wide memory or throughput benchmarks. The boundary-burst integration test admitted 10/10 events with a fixed-window counter and 5/10 with the actual sliding-window Lua implementation. Exact output and reproduction details are in [docs/ALGORITHMS.md](docs/ALGORITHMS.md).
 
 ---
 

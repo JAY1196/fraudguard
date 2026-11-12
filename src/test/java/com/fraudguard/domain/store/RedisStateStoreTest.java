@@ -232,6 +232,79 @@ class RedisStateStoreTest {
     }
 
     @Test
+    @DisplayName("Boundary burst: fixed window admits 2N while sliding window admits at most N")
+    void shouldDemonstrateFixedWindowBoundaryBurst() {
+        int limit = 5;
+        int totalEvents = limit * 2;
+        long windowMs = 60_000L;
+        long ttlSeconds = 120L;
+        long beforeBoundary = 59_999L;
+        long afterBoundary = 60_000L;
+
+        String fixedPrefix = "fraudguard:demo:fixed:" + UUID.randomUUID();
+        String slidingKey = "fraudguard:velocity:" + UUID.randomUUID();
+
+        int fixedAdmitted = 0;
+        int slidingAdmitted = 0;
+
+        // Five events immediately before the fixed-window boundary.
+        for (int i = 0; i < limit; i++) {
+            long timestamp = beforeBoundary;
+            long bucket = timestamp / windowMs;
+            String fixedKey = fixedPrefix + ":" + bucket;
+
+            Long count = redisTemplate.opsForValue().increment(fixedKey);
+            if (count == 1L) {
+                redisTemplate.expire(fixedKey, ttlSeconds, TimeUnit.SECONDS);
+            }
+            if (count <= limit) {
+                fixedAdmitted++;
+            }
+
+            long slidingCount = stateStore.recordAndCountSlidingWindow(
+                    slidingKey, "before-" + i, timestamp, windowMs, ttlSeconds
+            );
+            if (slidingCount <= limit) {
+                slidingAdmitted++;
+            }
+        }
+
+        // Five events immediately after the boundary.
+        for (int i = 0; i < limit; i++) {
+            long timestamp = afterBoundary;
+            long bucket = timestamp / windowMs;
+            String fixedKey = fixedPrefix + ":" + bucket;
+
+            Long count = redisTemplate.opsForValue().increment(fixedKey);
+            if (count == 1L) {
+                redisTemplate.expire(fixedKey, ttlSeconds, TimeUnit.SECONDS);
+            }
+            if (count <= limit) {
+                fixedAdmitted++;
+            }
+
+            long slidingCount = stateStore.recordAndCountSlidingWindow(
+                    slidingKey, "after-" + i, timestamp, windowMs, ttlSeconds
+            );
+            if (slidingCount <= limit) {
+                slidingAdmitted++;
+            }
+        }
+
+        System.out.printf(
+                "Fixed window admitted: %d/%d events%n",
+                fixedAdmitted, totalEvents
+        );
+        System.out.printf(
+                "Sliding window admitted: %d/%d events%n",
+                slidingAdmitted, totalEvents
+        );
+
+        assertThat(fixedAdmitted).isEqualTo(10);
+        assertThat(slidingAdmitted).isEqualTo(5);
+    }
+
+    @Test
     @DisplayName("Amount history: records amounts, preserves order, and trims beyond maxHistory")
     void shouldRecordAndRetrieveRecentAmounts() {
         String key = "fraudguard:amounts:" + UUID.randomUUID();
