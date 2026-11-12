@@ -222,17 +222,21 @@ See [DECISIONS.md](DECISIONS.md) for detailed architecture decision records:
 - **ADR 005:** Port Allocation Isolation (8082, 5433, 6381)
 - **ADR 006:** Windows Maven Wrapper Exit Code Handling
 - **ADR 007:** Event Contract Alignment with WalletLedger (Snake_case, UUIDs, Canonical Transaction Types)
+- **ADR 008:** StateStore Abstraction, Atomic Sliding Windows, and Out-of-Order Semantics
+- **ADR 009:** Conflict Detection on Event ID Mutation
 
 ---
 
 ## Known Limitations & Roadmap
 
-The current implementation focuses on deterministic, in-memory rule evaluation. The following capabilities are planned enhancements and are not part of the current implementation.
+FraudGuard combines deterministic stateless rules with Redis-backed stateful fraud detection. The roadmap below distinguishes implemented capabilities from planned enhancements.
 
-- **F1-A (Current):** In-memory rule execution with stateless rules (`HighAmountRule`, `UnusualHoursHighAmountRule`).
-- **F1-B (Upcoming):** Redis-based sliding-window velocity counters and rapid funds-movement anomaly detection.
+- **F1-A (Implemented):** In-memory rule execution with stateless rules (`HighAmountRule`, `UnusualHoursHighAmountRule`).
+- **F1-B (Implemented):** Redis-backed sliding-window velocity detection and stateful amount-spike detection, using atomic Lua scripts, event-ID deduplication, and TTL-based cleanup.
 - **F1-C (Upcoming):** PostgreSQL evaluation persistence, audit trail logging, and Flyway schema migrations.
 - **F1-D (Upcoming):** Kafka integration for ledger event ingestion.
+
+See [Rate-Limiting Algorithms](docs/ALGORITHMS.md) for algorithm comparisons, Redis command complexities, measured sorted-set memory usage, and the boundary-burst integration test.
 
 ---
 

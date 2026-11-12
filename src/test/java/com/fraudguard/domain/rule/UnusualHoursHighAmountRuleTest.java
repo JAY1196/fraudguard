@@ -30,7 +30,8 @@ class UnusualHoursHighAmountRuleTest {
                         null,
                         new FraudGuardProperties.UnusualHoursRuleProperties(
                                 enabled, start, end, THRESHOLD, WEIGHT, REASON_CODE, timeZone
-                        )
+                        ),
+                        null
                 ),
                 null
         );

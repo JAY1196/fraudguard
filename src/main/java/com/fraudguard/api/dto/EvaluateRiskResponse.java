@@ -19,7 +19,10 @@ public record EvaluateRiskResponse(
         @Schema(description = "Risk score capped between 0 and 100", example = "0")
         int score,
 
-        @Schema(description = "Sorted list of triggered fraud reason codes", example = "[\"HIGH_AMOUNT\"]")
+        @Schema(description = "Sorted list of triggered fraud reason codes", example = "[\"HIGH_AMOUNT\", \"DEGRADED\"]")
         @JsonProperty("reason_codes")
-        List<String> reasonCodes
+        List<String> reasonCodes,
+
+        @Schema(description = "True when one or more Redis-backed rules could not be evaluated", example = "false")
+        boolean degraded
 ) {}

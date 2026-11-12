@@ -48,6 +48,11 @@ public class RiskEvaluationController {
                     responseCode = "400",
                     description = "Validation failure or timestamp out of bounds",
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422",
+                    description = "Event identifier was reused with a different transaction payload",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     public ResponseEntity<EvaluateRiskResponse> evaluate(@Valid @RequestBody EvaluateRiskRequest request) {
@@ -69,9 +74,9 @@ public class RiskEvaluationController {
                 request.eventId(),
                 result.decision(),
                 result.score(),
-                result.reasonCodes()
+                result.reasonCodes(),
+                result.degraded()
         );
-
         return ResponseEntity.ok(response);
     }
 }

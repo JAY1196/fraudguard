@@ -7,6 +7,10 @@ import com.fraudguard.domain.model.RuleResult;
 import com.fraudguard.domain.model.Transaction;
 import com.fraudguard.domain.model.TransactionType;
 import com.fraudguard.domain.rule.FraudRule;
+import com.fraudguard.domain.rule.RedisBackedFraudRule;
+import com.fraudguard.exception.EventPayloadMismatchException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,6 +25,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -168,5 +173,136 @@ class RuleEngineTest {
         assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
         assertThat(result.score()).isZero();
         assertThat(result.reasonCodes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should return degraded result when a Redis-backed rule loses its connection")
+    void shouldReturnDegradedWhenRedisBackedRuleConnectionFails() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "RedisRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new RedisConnectionFailureException("Redis unavailable");
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule), properties, fixedClock);
+
+        EvaluationResult result = engine.evaluate(sampleTransaction);
+
+        assertThat(result.degraded()).isTrue();
+        assertThat(result.reasonCodes()).containsExactly("DEGRADED");
+        assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
+    }
+
+    @Test
+    @DisplayName("Should still BLOCK using a stateless rule when Redis is unavailable")
+    void shouldBlockUsingStatelessRuleWhenRedisIsUnavailable() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "RedisRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new RedisConnectionFailureException("Redis unavailable");
+            }
+        };
+
+        FraudRule statelessRule = new FraudRule() {
+            @Override
+            public String getName() {
+                return "HighAmountRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                return RuleResult.triggered("HIGH_AMOUNT", 80, "HIGH_AMOUNT");
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule, statelessRule), properties, fixedClock);
+
+        EvaluationResult result = engine.evaluate(sampleTransaction);
+
+        assertThat(result.degraded()).isTrue();
+        assertThat(result.decision()).isEqualTo(RiskDecision.BLOCK);
+        assertThat(result.score()).isEqualTo(80);
+        assertThat(result.reasonCodes()).containsExactly("DEGRADED", "HIGH_AMOUNT");
+    }
+
+    @Test
+    @DisplayName("Should return degraded result when a Redis-backed rule times out")
+    void shouldReturnDegradedWhenRedisBackedRuleTimesOut() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "RedisRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new org.springframework.dao.QueryTimeoutException(
+                        "Redis command timed out");
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule), properties, fixedClock);
+
+        EvaluationResult result = engine.evaluate(sampleTransaction);
+
+        assertThat(result.degraded()).isTrue();
+        assertThat(result.reasonCodes()).containsExactly("DEGRADED");
+        assertThat(result.decision()).isEqualTo(RiskDecision.ALLOW);
+    }
+    @Test
+    @DisplayName("Should propagate payload mismatch instead of returning degraded success")
+    void shouldPropagatePayloadMismatchFromRedisBackedRule() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "AmountSpikeRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new EventPayloadMismatchException("Event payload does not match");
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule), properties, fixedClock);
+
+        assertThatThrownBy(() -> engine.evaluate(sampleTransaction))
+                .isInstanceOf(EventPayloadMismatchException.class)
+                .hasMessage("Event payload does not match");
+    }
+
+    @Test
+    @DisplayName("Should propagate unrelated Redis data access errors instead of returning degraded success")
+    void shouldPropagateUnrelatedRedisDataAccessException() {
+        RedisBackedFraudRule redisRule = new RedisBackedFraudRule() {
+            @Override
+            public String getName() {
+                return "RedisRule";
+            }
+
+            @Override
+            public RuleResult evaluate(Transaction transaction) {
+                throw new DataAccessResourceFailureException(
+                        "Unexpected Redis data access failure"
+                );
+            }
+        };
+
+        RuleEngine engine = new RuleEngine(List.of(redisRule), properties, fixedClock);
+
+        assertThatThrownBy(() -> engine.evaluate(sampleTransaction))
+                .isInstanceOf(DataAccessResourceFailureException.class)
+                .hasMessage("Unexpected Redis data access failure");
     }
 }

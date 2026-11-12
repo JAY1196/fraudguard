@@ -1,9 +1,26 @@
 server:
-  port: 8082
+  port: ${APP_PORT:8082}
 
 spring:
   application:
     name: fraudguard
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6381}
+      timeout: 2000ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  health:
+    redis:
+      enabled: true
 
 fraudguard:
   thresholds:
@@ -25,3 +42,19 @@ fraudguard:
       weight: 40
       reason-code: UNUSUAL_HOURS_HIGH_AMOUNT
       time-zone: Asia/Kolkata
+    velocity:
+      enabled: true
+      window-seconds: 300
+      max-transactions-in-window: 5
+      weight: 40
+      reason-code: VELOCITY_EXCEEDED
+      ttl-seconds: 600
+    amount-spike:
+      enabled: true
+      multiplier: 3.0
+      history-size: 5
+      minimum-history: 3
+      weight: 35
+      reason-code: AMOUNT_SPIKE
+      max-history: 100
+      ttl-seconds: 86400

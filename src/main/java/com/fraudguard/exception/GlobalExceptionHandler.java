@@ -1,6 +1,5 @@
 package com.fraudguard.exception;
 
-import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -13,7 +12,6 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -47,6 +45,32 @@ public class GlobalExceptionHandler {
         problemDetail.setTitle("Timestamp Out Of Range");
         problemDetail.setType(URI.create("urn:problem:timestamp-out-of-range"));
         problemDetail.setProperty("code", "TIMESTAMP_OUT_OF_RANGE");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    @ExceptionHandler(AmountSpikeSnapshotExpiredException.class)
+    public ProblemDetail handleAmountSpikeSnapshotExpiredException(
+            AmountSpikeSnapshotExpiredException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                ex.getMessage()
+        );
+        problemDetail.setTitle("Amount Spike Snapshot Expired");
+        problemDetail.setType(URI.create("urn:problem:amount-spike-snapshot-expired"));
+        problemDetail.setProperty("code", "AMOUNT_SPIKE_SNAPSHOT_EXPIRED");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+    @ExceptionHandler(EventPayloadMismatchException.class)
+    public ProblemDetail handleEventPayloadMismatchException(EventPayloadMismatchException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                ex.getMessage()
+        );
+        problemDetail.setTitle("Event Payload Mismatch");
+        problemDetail.setType(URI.create("urn:problem:event-payload-mismatch"));
+        problemDetail.setProperty("code", "EVENT_PAYLOAD_MISMATCH");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;
     }
