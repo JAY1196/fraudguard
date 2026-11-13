@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Locale;
 
 @Schema(description = "Transaction payload for fraud risk evaluation")
 public record EvaluateRiskRequest(
@@ -47,6 +48,8 @@ public record EvaluateRiskRequest(
     public EvaluateRiskRequest {
         if (currency == null || currency.isBlank()) {
             currency = "INR";
+        } else {
+            currency = currency.trim().toUpperCase(Locale.ROOT);
         }
     }
 }

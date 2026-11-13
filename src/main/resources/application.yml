@@ -4,6 +4,16 @@ server:
 spring:
   application:
     name: fraudguard
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:127.0.0.1}:${POSTGRES_PORT:5433}/${POSTGRES_DB:fraudguard}
+    username: ${POSTGRES_USER:fraudguard}
+    password: ${POSTGRES_PASSWORD:fraudguard_secret}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
@@ -23,6 +33,8 @@ management:
       enabled: true
 
 fraudguard:
+  security:
+    api-key: ${FRAUDGUARD_API_KEY:}
   thresholds:
     review: 40
     block: 70
