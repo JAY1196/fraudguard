@@ -88,6 +88,18 @@ public class GlobalExceptionHandler {
         return problemDetail;
     }
 
+    @ExceptionHandler(InvalidRequestParameterException.class)
+    public ProblemDetail handleInvalidRequestParameter(InvalidRequestParameterException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                ex.getMessage()
+        );
+        problemDetail.setTitle("Bad Request");
+        problemDetail.setType(URI.create("urn:problem:invalid-request-parameter"));
+        problemDetail.setProperty("code", "INVALID_REQUEST_PARAMETER");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGenericException(Exception ex) {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
