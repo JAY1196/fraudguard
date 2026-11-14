@@ -2,10 +2,7 @@ package com.fraudguard.api.controller;
 
 import com.fraudguard.api.dto.EvaluateRiskRequest;
 import com.fraudguard.api.dto.EvaluateRiskResponse;
-import com.fraudguard.api.validator.TransactionTimestampValidator;
-import com.fraudguard.domain.engine.RuleEngine;
-import com.fraudguard.domain.model.EvaluationResult;
-import com.fraudguard.domain.model.Transaction;
+import com.fraudguard.api.service.RiskEvaluationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -25,12 +22,10 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Risk Evaluation", description = "Real-time transaction fraud risk scoring")
 public class RiskEvaluationController {
 
-    private final RuleEngine ruleEngine;
-    private final TransactionTimestampValidator timestampValidator;
+    private final RiskEvaluationService riskEvaluationService;
 
-    public RiskEvaluationController(RuleEngine ruleEngine, TransactionTimestampValidator timestampValidator) {
-        this.ruleEngine = ruleEngine;
-        this.timestampValidator = timestampValidator;
+    public RiskEvaluationController(RiskEvaluationService riskEvaluationService) {
+        this.riskEvaluationService = riskEvaluationService;
     }
 
     @PostMapping("/evaluate")
@@ -55,28 +50,9 @@ public class RiskEvaluationController {
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class))
             )
     })
-    public ResponseEntity<EvaluateRiskResponse> evaluate(@Valid @RequestBody EvaluateRiskRequest request) {
-        timestampValidator.validate(request.timestamp());
-
-        Transaction transaction = new Transaction(
-                request.eventId(),
-                request.sourceWalletId(),
-                request.destinationWalletId(),
-                request.amountPaise(),
-                request.type(),
-                request.currency(),
-                request.timestamp()
-        );
-
-        EvaluationResult result = ruleEngine.evaluate(transaction);
-
-        EvaluateRiskResponse response = new EvaluateRiskResponse(
-                request.eventId(),
-                result.decision(),
-                result.score(),
-                result.reasonCodes(),
-                result.degraded()
-        );
-        return ResponseEntity.ok(response);
+    public ResponseEntity<EvaluateRiskResponse> evaluate(
+            @Valid @RequestBody EvaluateRiskRequest request
+    ) {
+        return ResponseEntity.ok(riskEvaluationService.evaluate(request));
     }
 }

@@ -11,16 +11,27 @@ FraudGuard is a rule-based transaction fraud-risk scoring service designed for f
 ```mermaid
 flowchart TD
     Client["Client / WalletLedger"] -->|"POST /api/v1/risk/evaluate"| Controller["RiskEvaluationController"]
-    Controller --> Validator["TransactionTimestampValidator"]
-    Validator -->|"Skew > 300s: 400 ProblemDetail"| Client
-    Controller --> Engine["RuleEngine"]
-    Engine --> R1["HighAmountRule\n(Weight: 50)"]
-    Engine --> R2["UnusualHoursHighAmountRule\n(Weight: 40, Asia/Kolkata)"]
-    Engine --> Aggregator["Score Aggregator\n(Sum clamped to [0, 100])"]
-    Aggregator --> Decision["Decision Matrix\nScore >= 70: BLOCK\nScore >= 40: REVIEW\nElse: ALLOW"]
-    Decision --> Response["EvaluateRiskResponse\n(decision, score, reason_codes)"]
+    Controller --> Service["RiskEvaluationService"]
+    Service --> Hash["RequestHashService"]
+    Hash --> Claim["PostgreSQL Idempotency Claim"]
+    Claim -->|"Existing event ID"| Existing["Compare Request Hash"]
+    Existing -->|"Same payload"| Stored["Return Stored Decision"]
+    Existing -->|"Different payload"| Conflict["422 Event Payload Mismatch"]
+    Claim -->|"New event"| Validator["TransactionTimestampValidator"]
+    Validator --> Engine["RuleEngine"]
+    Engine --> Rules["Fraud Rules"]
+    Rules --> Redis["Redis State Store"]
+    Rules --> Decision["Risk Decision"]
+    Decision --> Persist["PostgreSQL Decision Persistence"]
+    Persist --> Response["EvaluateRiskResponse"]
+    Stored --> Response
     Response --> Client
-```
+    Conflict --> Client
+
+    Client -->|"GET /api/v1/wallets/{wallet_id}/decisions"| Query["DecisionController"]
+    Query --> Paging["Cursor-based Pagination"]
+    Paging --> Persisted["PostgreSQL risk_decisions"]
+    Persisted --> Query
 
 ---
 
@@ -75,6 +86,19 @@ docker compose up -d
 docker compose ps
 ```
 
+### API Authentication Configuration
+
+All application endpoints except `/actuator/health` require the `X-API-Key` header.
+
+Set the API key in the same PowerShell session before starting the application:
+
+```powershell
+$env:FRAUDGUARD_API_KEY = "replace-with-a-long-random-secret"
+```
+
+Use the same value in API requests. Do not commit real API keys or put production secrets in source control.
+
+The `.env` file is used by Docker Compose for infrastructure configuration. Spring Boot does not automatically load that file when launched directly with Maven, so export `FRAUDGUARD_API_KEY` into the application process environment.
 ### 3. Build & Run Application
 
 **Windows (PowerShell):**
@@ -118,6 +142,7 @@ A transaction that does not trigger any configured fraud rules receives an `ALLO
 ```powershell
 curl.exe -s -i -X POST http://localhost:8082/api/v1/risk/evaluate `
   -H "Content-Type: application/json" `
+  -H "X-API-Key: $env:FRAUDGUARD_API_KEY" `
   -d '{"event_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","source_wallet_id":"11111111-1111-1111-1111-111111111111","destination_wallet_id":"22222222-2222-2222-2222-222222222222","amount_paise":50000,"type":"TRANSFER","currency":"INR","timestamp":"2026-11-09T05:00:00Z"}'
 ```
 
@@ -144,6 +169,7 @@ The resulting score is 90, which meets the `BLOCK` threshold.
 ```powershell
 curl.exe -s -i -X POST http://localhost:8082/api/v1/risk/evaluate `
   -H "Content-Type: application/json" `
+  -H "X-API-Key: $env:FRAUDGUARD_API_KEY" `
   -d '{"event_id":"b2c3d4e5-f6a7-8901-bcde-f12345678901","source_wallet_id":"11111111-1111-1111-1111-111111111111","destination_wallet_id":"22222222-2222-2222-2222-222222222222","amount_paise":6000000,"type":"TRANSFER","currency":"INR","timestamp":"2026-11-08T21:00:00Z"}'
 ```
 
@@ -168,6 +194,7 @@ The API validates incoming request fields. Invalid UUID formats and negative tra
 ```powershell
 curl.exe -s -i -X POST http://localhost:8082/api/v1/risk/evaluate `
   -H "Content-Type: application/json" `
+  -H "X-API-Key: $env:FRAUDGUARD_API_KEY" `
   -d '{"event_id":"invalid-uuid","source_wallet_id":"11111111-1111-1111-1111-111111111111","destination_wallet_id":"22222222-2222-2222-2222-222222222222","amount_paise":-500,"type":"TRANSFER","timestamp":"2026-11-09T05:00:00Z"}'
 ```
 
@@ -192,6 +219,7 @@ The API rejects requests with event timestamps more than `300` seconds ahead of 
 ```powershell
 curl.exe -s -i -X POST http://localhost:8082/api/v1/risk/evaluate `
   -H "Content-Type: application/json" `
+  -H "X-API-Key: $env:FRAUDGUARD_API_KEY" `
   -d '{"event_id":"c3d4e5f6-a7b8-9012-cdef-123456789012","source_wallet_id":"11111111-1111-1111-1111-111111111111","destination_wallet_id":"22222222-2222-2222-2222-222222222222","amount_paise":50000,"type":"TRANSFER","timestamp":"2099-01-01T00:00:00Z"}'
 ```
 
@@ -233,8 +261,10 @@ FraudGuard combines deterministic stateless rules with Redis-backed stateful fra
 
 - **F1-A (Implemented):** In-memory rule execution with stateless rules (`HighAmountRule`, `UnusualHoursHighAmountRule`).
 - **F1-B (Implemented):** Redis-backed sliding-window velocity detection and stateful amount-spike detection, using atomic Lua scripts, event-ID deduplication, and TTL-based cleanup.
-- **F1-C (Upcoming):** PostgreSQL evaluation persistence, audit trail logging, and Flyway schema migrations.
-- **F1-D (Upcoming):** Kafka integration for ledger event ingestion.
+- **F1-C (Implemented):** PostgreSQL decision persistence, Flyway migrations, SHA-256 request-hash idempotency, API-key authentication, and cursor-based decisions pagination.
+- **F1-D (Planned):** k6-based latency and throughput benchmarking of the risk-evaluation API.
+
+See [F1-C Implementation](docs/F1-C.md) for PostgreSQL persistence, idempotency, authentication, pagination, configuration, and API examples.
 
 See [Rate-Limiting Algorithms](docs/ALGORITHMS.md) for algorithm comparisons, Redis command complexities, measured sorted-set memory usage, and the boundary-burst integration test.
 

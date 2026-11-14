@@ -1,6 +1,7 @@
 package com.fraudguard.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fraudguard.PostgresTestcontainersConfiguration;
 import com.fraudguard.api.dto.EvaluateRiskRequest;
 import com.fraudguard.domain.model.TransactionType;
 import org.junit.jupiter.api.DisplayName;
@@ -37,6 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "fraudguard.rules.unusual-hours.enabled=false"
 })
 @AutoConfigureMockMvc
+@org.springframework.context.annotation.Import(PostgresTestcontainersConfiguration.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class RiskEvaluationRedisDegradedModeIntegrationTest {
 
@@ -87,12 +89,14 @@ class RiskEvaluationRedisDegradedModeIntegrationTest {
                 createRequest(eventId, 200_000L, timestamp);
 
         mockMvc.perform(post("/api/v1/risk/evaluate")
+                        .header("X-API-Key", "test-only-fraudguard-api-key-2026")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(originalRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.degraded", is(false)));
 
         mockMvc.perform(post("/api/v1/risk/evaluate")
+                        .header("X-API-Key", "test-only-fraudguard-api-key-2026")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(conflictingRequest)))
                 .andExpect(status().isUnprocessableEntity())
@@ -121,6 +125,7 @@ class RiskEvaluationRedisDegradedModeIntegrationTest {
         );
 
         mockMvc.perform(post("/api/v1/risk/evaluate")
+                        .header("X-API-Key", "test-only-fraudguard-api-key-2026")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isInternalServerError())
@@ -144,6 +149,7 @@ class RiskEvaluationRedisDegradedModeIntegrationTest {
         );
 
         mockMvc.perform(post("/api/v1/risk/evaluate")
+                        .header("X-API-Key", "test-only-fraudguard-api-key-2026")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
