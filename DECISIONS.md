@@ -169,3 +169,44 @@ In distributed financial architectures, an `event_id` is a globally unique, immu
    - Rejecting with `EVENT_PAYLOAD_MISMATCH` alerts the upstream caller (WalletLedger) to a serious payload divergence or identifier collision.
 3. **Idempotent Replay**: Re-submitting the exact same `event_id` with an identical amount is an idempotent no-op and succeeds without error or duplicate history entry.
 
+
+
+## ADR 010: PostgreSQL Transactions, Redis State, and Degraded Decision Replays
+
+### Context
+
+FraudGuard persists risk decisions and idempotency claims in PostgreSQL, while stateful fraud rules use Redis for velocity windows and amount-spike history. PostgreSQL and Redis do not participate in a shared distributed transaction. A Redis mutation can therefore succeed even if the surrounding PostgreSQL transaction later rolls back.
+
+Redis availability can also affect evaluation. When a Redis-backed rule encounters a Redis connection failure or query timeout, the RuleEngine continues evaluating available rules and marks the resulting decision as degraded.
+
+### Decision
+
+1. **PostgreSQL is the durable decision and idempotency record.**
+   - The event claim and completed risk decision are written within the PostgreSQL transaction.
+   - An identical retry retrieves the previously stored decision instead of running the rules again.
+   - Reusing an event ID with a different request payload is rejected as an event payload mismatch.
+
+2. **Redis mutations are not transactionally coupled to PostgreSQL.**
+   - Redis Lua scripts execute their state mutations atomically within Redis, but they cannot roll back when the PostgreSQL transaction rolls back.
+   - A Redis mutation may therefore remain after a failed PostgreSQL transaction.
+   - FraudGuard does not claim cross-datastore atomicity.
+
+3. **Event-ID-keyed Redis state makes replays safe.**
+   - The velocity sliding-window script uses the event ID as its sorted-set member. Replaying the same event updates that member rather than creating another entry.
+   - The amount-spike script stores a baseline snapshot keyed by event ID. An exact replay returns the original baseline instead of recording the event again.
+   - These mechanisms make repeated processing of the same event idempotent within the retained Redis state.
+   - Amount-spike snapshots have bounded retention. If a required snapshot has expired while its history entry remains, the script reports `AMOUNT_SPIKE_SNAPSHOT_EXPIRED` rather than silently calculating a different baseline.
+
+4. **Degraded decisions are persisted and remain authoritative for retries.**
+   - When a Redis connection failure or query timeout prevents a Redis-backed rule from running, the RuleEngine continues with the rules it can evaluate.
+   - The resulting decision is marked `degraded=true` and includes the `DEGRADED` reason code.
+   - This completed decision is stored in PostgreSQL.
+   - An identical retry returns that stored decision, including its original degraded flag and score, even if Redis has recovered since the first evaluation.
+   - A retry does not silently recalculate or upgrade the original decision. A new evaluation requires a distinct event ID.
+
+### Trade-offs
+
+- **Advantage:** PostgreSQL provides a durable, consistent idempotency record, while event-ID-based Redis operations reduce duplicate state mutations during retries.
+- **Advantage:** A degraded result remains explainable and stable across retries instead of changing based on Redis availability at retry time.
+- **Disadvantage:** Redis state can outlive a rolled-back PostgreSQL transaction, and bounded Redis retention means replay safety is limited by the lifetime of the relevant state.
+- **Disadvantage:** A degraded decision may remain stored even after Redis recovers; automatic re-evaluation is intentionally not performed.
